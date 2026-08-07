@@ -1,0 +1,47 @@
+#!/bin/bash
+# Create and persist the attestation key, once, at first boot.
+#
+# The AK is created inside the TPM and never leaves it. It is persisted at a
+# fixed handle so the verifier sees the same key across reboots; regenerating
+# it per request would be slow and would look like a new machine every time.
+#
+# The EK certificate is read from TPM NV storage. That certificate is what
+# chains this key back to the manufacturer, and it is the check that stops an
+# attacker feeding a verifier honest measurements from an emulated TPM inside
+# their own hypervisor.
+set -euo pipefail
+
+STATE=/var/lib/attestos
+AK_HANDLE=0x81010002
+
+mkdir -p "$STATE"
+
+if tpm2_readpublic -c "$AK_HANDLE" >/dev/null 2>&1; then
+    echo "attestos: AK already provisioned at $AK_HANDLE"
+    exit 0
+fi
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+# Endorsement primary, then an attestation key under it.
+tpm2_createek -c "$work/ek.ctx" -G rsa -u "$work/ek.pub"
+tpm2_createak -C "$work/ek.ctx" -c "$work/ak.ctx" \
+    -G rsa -g sha256 -s rsassa \
+    -u "$work/ak.pub" -f pem -n "$work/ak.name"
+
+tpm2_evictcontrol -C o -c "$work/ak.ctx" "$AK_HANDLE"
+install -m 0444 "$work/ak.pub" "$STATE/ak.pem"
+
+# EK certificate from NV. Absent on some parts; the verifier fails closed when
+# it is missing rather than trusting an unchained key, which is the correct
+# outcome and not something to paper over here.
+if tpm2_nvread 0x01c00002 -o "$work/ek.crt" 2>/dev/null; then
+    install -m 0444 "$work/ek.crt" "$STATE/ak.crt"
+    echo "attestos: EK certificate stored"
+else
+    echo "attestos: NO EK certificate in NV at 0x01c00002." >&2
+    echo "attestos: attestation will be REFUSED by a conforming verifier." >&2
+fi
+
+echo "attestos: AK provisioned at $AK_HANDLE"

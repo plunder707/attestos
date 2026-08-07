@@ -1,0 +1,14 @@
+[Unit]
+Description=Provision the attestos TPM attestation key
+Documentation=https://github.com/plunder707/attested-gaming
+ConditionPathExists=/dev/tpmrm0
+ConditionPathExists=!/var/lib/attestos/ak.pem
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/attestos-provision
+RemainAfterExit=yes
+StateDirectory=attestos
+
+[Install]
+WantedBy=multi-user.target

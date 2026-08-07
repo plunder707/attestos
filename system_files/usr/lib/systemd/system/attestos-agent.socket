@@ -1,0 +1,12 @@
+[Unit]
+Description=attestos attestation agent socket
+Documentation=https://github.com/plunder707/attested-gaming
+
+[Socket]
+# Loopback only. The agent gathers evidence for a local client that holds the
+# TLS session with the vendor; it is not itself an internet-facing service.
+ListenStream=127.0.0.1:9843
+Accept=yes
+
+[Install]
+WantedBy=sockets.target

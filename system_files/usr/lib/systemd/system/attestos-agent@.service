@@ -1,0 +1,20 @@
+[Unit]
+Description=attestos attestation agent
+Requires=attestos-provision.service
+After=attestos-provision.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/attestos-agent
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+# The agent reads the TPM and the event log and nothing else.
+DynamicUser=no
+User=root
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+SystemCallFilter=@system-service

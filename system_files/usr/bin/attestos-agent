@@ -1,0 +1,176 @@
+#!/usr/bin/python3
+"""attestos-agent: produce a TPM quote for a verifier's challenge.
+
+Reads a JSON challenge on stdin, writes a JSON attestation on stdout. Meant to
+be socket-activated so nothing is running while nobody is playing.
+
+    in:  {"nonce": "<hex>", "channel_id": "<tls exporter value>"}
+    out: {"quote_b64": ..., "signature_b64": ..., "pcrs": {...},
+          "event_log_b64": ..., "ak_pub_pem": ..., "ak_cert_b64": ...,
+          "image_digest": ...}
+
+WHAT THIS DOES NOT DO
+  It does not decide anything. It gathers evidence and hands it over. Every
+  judgement belongs to the verifier, which runs on the vendor's server where
+  the player cannot reach it. An agent that reported its own verdict would be
+  asking the attacker's machine whether the attacker's machine is honest.
+
+THE NONCE IS NOT USED RAW
+  The value signed into the quote is H(nonce || channel_id), binding the
+  attestation to the TLS session that requested it. Without that binding a
+  cheater forwards the challenge to a clean machine on the same desk and
+  relays back a perfectly valid quote. Freshness is not origin.
+
+THE EVENT LOG MATTERS
+  PCR values are opaque hashes. The TCG event log is what lets a verifier
+  replay the measurements and see WHAT was measured rather than only that a
+  hash matched. Sending PCRs without the log gives the verifier a number it
+  cannot interpret.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+# Must match the verifier's required set. A quote that omits a PCR proves
+# nothing about it, so the verifier refuses a short selection; there is no
+# point producing one.
+PCRS = (7, 11, 12, 15)
+BANK = "sha256"
+
+EVENT_LOG = "/sys/kernel/security/tpm0/binary_bios_measurements"
+IMAGE_DIGEST = "/usr/lib/attestos/image-digest"
+
+# Persistent handles. The AK is created once at first boot by
+# attestos-provision and persisted, because creating it per request is slow
+# and would change the key the verifier has come to recognise.
+AK_HANDLE = "0x81010002"
+AK_PUB = "/var/lib/attestos/ak.pem"
+AK_CERT = "/var/lib/attestos/ak.crt"
+
+
+class AgentError(RuntimeError):
+    pass
+
+
+def run(*args: str, **kw) -> bytes:
+    proc = subprocess.run(args, capture_output=True, **kw)
+    if proc.returncode != 0:
+        raise AgentError(
+            f"{args[0]} failed ({proc.returncode}): "
+            f"{proc.stderr.decode(errors='replace').strip()}")
+    return proc.stdout
+
+
+def bind_nonce(nonce: str, channel_id: str) -> str:
+    """H(nonce || channel_id). Identical construction to the verifier's."""
+    return hashlib.sha256(f"{nonce}|{channel_id}".encode()).hexdigest()
+
+
+def read_pcrs() -> dict[int, str]:
+    out = run("tpm2_pcrread", f"{BANK}:{','.join(str(p) for p in PCRS)}")
+    values: dict[int, str] = {}
+    for line in out.decode().splitlines():
+        line = line.strip()
+        if ":" not in line or not line.split(":")[0].strip().isdigit():
+            continue
+        index, raw = line.split(":", 1)
+        values[int(index)] = raw.strip().removeprefix("0x").lower()
+    missing = [p for p in PCRS if p not in values]
+    if missing:
+        raise AgentError(f"tpm2_pcrread returned no value for PCRs {missing}")
+    return values
+
+
+def quote(bound_nonce: str) -> tuple[bytes, bytes]:
+    """Returns (attestation blob, signature). Both are raw TPM structures.
+
+    The blob is what the TPM signed. It carries the PCR digest, not the PCR
+    values, which is why the verifier recomputes rather than trusts what we
+    send alongside.
+    """
+    with tempfile.TemporaryDirectory() as work:
+        msg = os.path.join(work, "quote.msg")
+        sig = os.path.join(work, "quote.sig")
+        run("tpm2_quote",
+            "-c", AK_HANDLE,
+            "-l", f"{BANK}:{','.join(str(p) for p in PCRS)}",
+            "-q", bound_nonce,
+            "-m", msg,
+            "-s", sig,
+            "-g", "sha256")
+        with open(msg, "rb") as fh:
+            attestation = fh.read()
+        with open(sig, "rb") as fh:
+            signature = fh.read()
+    return attestation, signature
+
+
+def read_file(path: str, optional: bool = False) -> bytes | None:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except OSError:
+        if optional:
+            return None
+        raise AgentError(
+            f"{path} is unreadable. Without it the verifier cannot interpret "
+            "the PCR values it is being sent.")
+
+
+def attest(challenge: dict) -> dict:
+    nonce = challenge.get("nonce")
+    channel_id = challenge.get("channel_id")
+    if not nonce or not channel_id:
+        raise AgentError(
+            "challenge needs both nonce and channel_id; an unbound quote can "
+            "be relayed from another machine")
+
+    bound = bind_nonce(nonce, channel_id)
+    attestation, signature = quote(bound)
+    event_log = read_file(EVENT_LOG)
+    ak_pub = read_file(AK_PUB)
+    ak_cert = read_file(AK_CERT, optional=True)
+    digest = read_file(IMAGE_DIGEST, optional=True)
+
+    def b64(data: bytes | None) -> str | None:
+        return base64.b64encode(data).decode() if data else None
+
+    return {
+        "quote_b64": b64(attestation),
+        "signature_b64": b64(signature),
+        "pcrs": {str(k): v for k, v in read_pcrs().items()},
+        "event_log_b64": b64(event_log),
+        "ak_pub_pem": ak_pub.decode() if ak_pub else None,
+        "ak_cert_b64": b64(ak_cert),
+        "image_digest": digest.decode().strip() if digest else None,
+        "pcr_selection": list(PCRS),
+        "bank": BANK,
+    }
+
+
+def main() -> int:
+    try:
+        challenge = json.load(sys.stdin)
+    except json.JSONDecodeError as exc:
+        json.dump({"error": f"malformed challenge: {exc}"}, sys.stdout)
+        return 2
+    try:
+        json.dump(attest(challenge), sys.stdout)
+    except AgentError as exc:
+        # Report the failure rather than a partial attestation. A verifier
+        # that receives half a quote must not be able to mistake it for a
+        # whole one.
+        json.dump({"error": str(exc)}, sys.stdout)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
