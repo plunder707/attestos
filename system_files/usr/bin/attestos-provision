@@ -21,8 +21,7 @@ if ! tpm2_readpublic -Q -c "$AK_HANDLE" >/dev/null 2>&1; then
     tpm2_createak -Q -C "$EK_HANDLE" -c "$work/ak.ctx" \
         -G rsa -g sha256 -s rsassa -u "$work/ak.pem" -f pem \
         -n "$work/ak.name"
-    tpm2_evictcontrol -Q -C o -c "$work/ak.ctx" "$AK_HANDLE"
-    tpm2_flushcontext "$work/ak.ctx"
+    tpm2_evictcontrol -Q -R -C o -c "$work/ak.ctx" "$AK_HANDLE"
 fi
 tpm2_readpublic -Q -c "$AK_HANDLE" -o "$work/ak.pem" -f pem \
     -n "$work/ak.name"
