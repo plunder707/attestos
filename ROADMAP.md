@@ -31,7 +31,7 @@ which is a valid baseline when no external command-line inputs are supplied;
 it remains mandatory in the signed quote selection but is not independently a
 nonzero admission gate.
 
-## 2. UKI-capable base admission - in measurement
+## 2. UKI-capable base admission - harness control passed, policy held
 
 - Build and boot the pinned Bluefin LTS/CentOS bootc candidate.
 - Prove the firmware selected the intended signed UKI.
@@ -46,9 +46,16 @@ negative passes.
 
 Standard Bluefin LTS is now a measured negative control: it booted through
 shim and GRUB with separate kernel/initramfs artifacts, not the statically
-inspected UKI. The next bounded experiment is the Fedora sealed Atomic
-positive control in `FEDORA_SEALED_POSITIVE_CONTROL.md`. It tests the harness's
-loaded-UKI identity and PCR 11 joins only; it does not advance policy trust.
+inspected UKI. The Fedora sealed Atomic positive control in
+`FEDORA_SEALED_POSITIVE_CONTROL.md` passed twice on one frozen head. It proves
+the harness's loaded-UKI identity, Secure Boot tamper-negative, and PCR 11
+joins, but contains no attestos policy and does not advance manufacturer,
+policy, or production trust.
+
+The next bounded experiment must build the attestos agent and policy into a
+new sealed image before UKI creation, then replay the relevant event logs and
+verify a signed quote outside the guest. The positive-control guest receipt is
+observation evidence, not a production attestation token.
 
 ## 3. Policy verifier
 

@@ -2,6 +2,26 @@
 
 Status: development-only harness experiment. It grants no attestation trust.
 
+## Result
+
+Passed twice on the same source head, `b87b9e8ab92d9ef2e9a5010e8995ecfc091218f7`,
+in GitHub Actions run
+[`31218059725`](https://github.com/plunder707/attestos/actions/runs/31218059725)
+(attempts 1 and 2). The independently revalidated second artifact has SHA-256
+`6ec6882f37d6f8b13a8844bba86483ccf2a66b3f522bb7c937479f1aeb9d167f`.
+
+Both attempts produced the same immutable source, firmware, UKI, embedded
+command line, composefs deployment, and PCR 11 identities. The unchanged
+upstream UKI booted with Secure Boot enabled, systemd-stub named the exact file
+inspected before boot, the loaded-file SHA-256 matched, PCR 11 was nonzero, and
+firmware rejected a copy whose `.cmdline` bytes were changed without resigning.
+All 13 harness gates passed. Manufacturer, policy, and production trust stayed
+false in every receipt.
+
+This establishes a reproducible positive control for the admission harness. It
+does not attest the Bazzite preview, validate a hardware TPM or manufacturer,
+replay an event log, verify an attestos policy, or authorize installation.
+
 ## Question
 
 Can the existing admission harness distinguish a real systemd-boot UKI boot

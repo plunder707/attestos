@@ -35,6 +35,14 @@ This repository is the image that produces the evidence.
 > boot-policy admission remain unsolved. Neither green run establishes a
 > functioning production attestation system.
 >
+> A separate Fedora sealed-image positive control now passes twice in
+> [run 31218059725](https://github.com/plunder707/attestos/actions/runs/31218059725).
+> It proves the harness can boot an immutable upstream-signed UKI, join the
+> firmware-selected path and loaded-file hash to the preboot inspection,
+> observe nonzero PCR 11, and reject an unsigned `.cmdline` mutation. This is a
+> harness control only: all manufacturer, policy, and production trust flags
+> remain false, and it does not make the Bazzite preview installable.
+>
 > This source is available for review and reproducible emulation. No GHCR
 > image is published and it is not an installable trusted distribution.
 
