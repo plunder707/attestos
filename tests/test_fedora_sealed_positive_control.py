@@ -561,33 +561,26 @@ def test_upstream_pair_is_frozen_without_a_run_local_signing_authority():
     assert "ATTESTOS_FEDORA_OVMF_CODE" in runner
 
 
-def test_console_driver_uses_shared_luks_contract_across_slow_tcg_boot():
+def test_console_driver_is_observation_only_across_slow_tcg_boot():
     source = (ROOT / "scripts/drive_fedora_sealed_console.py").read_text()
     assert 'default=960' in source
-    assert 'default=120' in source
-    assert '"--input-interval", type=int, default=10' in source
-    assert '"--input-stop", type=int, default=210' in source
     assert '"--screenshot-interval", type=int, default=30' in source
-    assert "if next_input > input_deadline" in source
-    assert "next_input = None" in source
-    assert 'qmp.type_text(luks_passphrase)' in source
+    assert "human-monitor-command" not in source
+    assert "sendkey" not in source
     assert "ctrl-alt-f9" not in source
     assert "console_probe_attempt" not in source
-    assert "luks_unlock_attempt" in source
     assert 'qmp.screendump(screenshot)' in source
 
 
-def test_disk_builder_and_console_share_public_disposable_luks_passphrase():
+def test_disposable_positive_control_root_is_explicitly_unencrypted():
     builder = (ROOT / "scripts/build_fedora_sealed_disk.sh").read_text()
-    runner = (ROOT / "scripts/run_fedora_sealed_positive_control.sh").read_text()
-    contract = "canary/fedora-sealed/public-luks-passphrase.txt"
-    passphrase = (ROOT / contract).read_text(encoding="ascii").strip()
-    assert passphrase.isascii() and passphrase.isalnum()
-    assert contract in builder
-    assert contract in runner
-    assert '--key-file="$luks_key"' in builder
-    assert 'cryptsetup open --key-file="$luks_key"' in builder
-    assert 'rm -f "$luks_key"' in builder
+    partition = (
+        ROOT / "canary/fedora-sealed/repart.d/02-sysroot.conf"
+    ).read_text()
+    assert "plain root" in builder
+    assert 'sudo mount "$root" "$mount_root"' in builder
+    assert "cryptsetup" not in builder
+    assert not any(line.startswith("Encrypt=") for line in partition.splitlines())
 
 
 def test_fedora_runner_preserves_visual_diagnostics_without_guest_network():
@@ -598,7 +591,7 @@ def test_fedora_runner_preserves_visual_diagnostics_without_guest_network():
     assert "-nic none" in runner
     assert "-vga std" in runner
     assert '--output-dir "$output"' in runner
-    assert "unlock_attempts=" in runner
+    assert "unlock_attempts=" not in runner
     assert "screen-*.ppm" in workflow
 
 

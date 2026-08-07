@@ -37,20 +37,6 @@ class QMP:
             raise RuntimeError(f"QMP {command} failed: {response['error']}")
         return response
 
-    def sendkey(self, key: str) -> None:
-        self.execute(
-            "human-monitor-command",
-            {"command-line": f"sendkey {key}"},
-        )
-
-    def type_text(self, value: str) -> None:
-        if not value or not value.isascii() or not value.isalnum():
-            raise ValueError("console input must be non-empty ASCII alphanumeric text")
-        for character in value.lower():
-            self.sendkey(character)
-            time.sleep(0.025)
-        self.sendkey("ret")
-
     def status(self) -> str:
         return str(self.execute("query-status")["return"]["status"])
 
@@ -71,56 +57,28 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--qmp", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--luks-passphrase-file", type=Path, required=True)
     parser.add_argument("--drive-seconds", type=int, default=960)
-    parser.add_argument("--input-start", type=int, default=120)
-    parser.add_argument("--input-interval", type=int, default=10)
-    parser.add_argument("--input-stop", type=int, default=210)
     parser.add_argument("--screenshot-interval", type=int, default=30)
     args = parser.parse_args()
-    if not 0 <= args.input_start <= args.input_stop < args.drive_seconds:
-        raise ValueError("console input window must be ordered within the drive bound")
-    if args.input_interval <= 0 or args.screenshot_interval <= 0:
+    if args.drive_seconds <= 0 or args.screenshot_interval <= 0:
         raise ValueError("console intervals must be positive")
 
     wait_for_socket(args.qmp)
     qmp = QMP(args.qmp)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    luks_passphrase = args.luks_passphrase_file.read_text(encoding="ascii").strip()
-    if not luks_passphrase or not luks_passphrase.isascii() or not luks_passphrase.isalnum():
-        raise ValueError("LUKS passphrase contract must be ASCII alphanumeric text")
     started = time.monotonic()
-    next_input = started + args.input_start
-    input_deadline = started + args.input_stop
     next_screenshot = started + args.screenshot_interval
     deadline = started + args.drive_seconds
-    input_attempt = 0
     screenshot_attempt = 0
 
-    # Under TCG the LUKS prompt appears shortly after systemd-cryptsetup starts,
-    # but the observed prompt-to-emergency window is shorter than one minute.
-    # Send the shared public canary passphrase only across that bounded window;
-    # continuing after it closes would type into dracut's emergency shell and
-    # create a misleading execution signal.
+    # The console is observation-only. Guest evidence comes from the installed
+    # systemd probe on a separate block device, never from typed shell commands.
     while time.monotonic() < deadline:
         now = time.monotonic()
         wake_at = min(next_screenshot, deadline)
-        if next_input is not None:
-            wake_at = min(wake_at, next_input)
         time.sleep(max(0.0, wake_at - now))
         elapsed = int(time.monotonic() - started)
         try:
-            if next_input is not None and time.monotonic() >= next_input:
-                qmp.type_text(luks_passphrase)
-                input_attempt += 1
-                print(
-                    f"luks_unlock_attempt={input_attempt} "
-                    f"elapsed_seconds={elapsed} qemu_status={qmp.status()}",
-                    flush=True,
-                )
-                next_input += args.input_interval
-                if next_input > input_deadline:
-                    next_input = None
             if time.monotonic() >= next_screenshot:
                 screenshot_attempt += 1
                 screenshot = args.output_dir / f"screen-{elapsed:04d}s.ppm"

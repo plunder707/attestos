@@ -64,7 +64,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             btrfs-progs \
             cpio \
-            cryptsetup-bin \
             curl \
             dosfstools \
             e2fsprogs \
