@@ -76,15 +76,7 @@ def guest_evidence() -> dict:
 
 
 def provenance() -> dict:
-    return {
-        "image_reference": IMAGE,
-        "installer_reference": INSTALLER,
-        "disk_builder": {
-            "name": "bcvk",
-            "version": "0.10.0",
-            "asset_sha256": validator.BCVK_V010_SHA256,
-        },
-    }
+    return {"image_reference": IMAGE, "installer_reference": INSTALLER}
 
 
 def test_positive_control_requires_every_join():
@@ -109,14 +101,6 @@ def test_installer_version_cannot_drift_from_provenance():
     result = validator.evaluate(static_evidence(), guest_evidence(), evidence)
     assert result["passed"] is False
     assert result["gates"]["immutable_installer_join"] is False
-
-
-def test_disk_builder_cannot_drift_from_pinned_release():
-    evidence = provenance()
-    evidence["disk_builder"]["version"] = "0.10.1"
-    result = validator.evaluate(static_evidence(), guest_evidence(), evidence)
-    assert result["passed"] is False
-    assert result["gates"]["pinned_disk_builder"] is False
 
 
 def test_unloaded_decoy_cannot_satisfy_identity_join():
@@ -176,19 +160,22 @@ def test_workflow_and_runner_preserve_isolation_and_nonpublication():
     assert "-nic none" in runner
     assert "accel=tcg" in runner
     assert "-enable-kvm" not in runner
-    builder = (ROOT / "scripts/build_fedora_sealed_disk.sh").read_text()
-    assert '"$bcvk" to-disk' in builder
-    assert 'podman pull "$source_reference"' in builder
-    assert "podman push" not in builder
+    assert "--network=none" in (
+        ROOT / "scripts/build_fedora_sealed_disk.sh"
+    ).read_text()
 
 
-def test_disk_builder_uses_upstream_bcvk_contract_without_bypasses():
+def test_version_matched_installer_uses_source_prepare_root_contract():
     builder = (ROOT / "scripts/build_fedora_sealed_disk.sh").read_text()
-    assert '"$bcvk" to-disk' in builder
-    assert "--composefs-backend" in builder
-    assert "--bootloader=systemd" in builder
-    assert "--skip-finalize" not in builder
-    assert "--skip-fetch-check" not in builder
+    assert '"$source_reference"' in builder
+    assert "sh -c 'for path in" in builder
+    assert '/usr/lib/ostree/prepare-root.conf:ro' in builder
+    assert 'source-prepare-root.sha256' in builder
+
+
+def test_static_inspection_discovers_nested_bootc_uki_path():
+    inspector = (ROOT / "scripts/inspect_fedora_sealed_disk.py").read_text()
+    assert '(esp / "EFI" / "Linux").rglob("*.efi")' in inspector
 
 
 def test_historical_control_binds_source_and_installer_to_one_digest():

@@ -32,8 +32,6 @@ without the loaded-path identity join cannot pass.
 - Fedora 44 Silverblue sealed image:
   `quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d0e34c45cb33adbeee3ada65b33addbb30297eb938bdb7af35c67b63b7028eb7`
 - Installer image: the same immutable Silverblue sealed image and digest above.
-- Disk builder: upstream-tested `bcvk v0.10.0`, release asset SHA-256
-  `444e54422cac41447d2a95cc5c64794070b9eb6e42ef0c9d1f7582e29e94e341`.
 - Upstream OVMF variable store SHA-256:
   `07029be230ad284b910e94e16dbd05f5b495f194dea90629bfdf94cb390b853b`
 - Vendored Cosign public key SHA-256:
@@ -57,13 +55,16 @@ storage-ingest defect tracked in `bootc-dev/bootc#2194` and related format work
 in `bootc-dev/bootc#2334`; no digest check is bypassed here.
 
 The April candidate predates that regression window and uses the same immutable
-image for both source and installer. A first canary proved the composefs install
-completed, but our hand-built `to-filesystem --skip-finalize` wrapper left no UKI
-on the ESP. That was a harness defect: the frozen upstream README documents
-`bcvk v0.10.0` and `bcvk to-disk` as its tested disk path. The canary now uses
-that exact checksum-pinned release and command contract. If bcvk cannot place
-the signed UKI, the experiment fails closed again; it never copies a UKI into
-the ESP after installation.
+image for both source and installer. Its first canary completed the composefs
+installation, then exposed a harness defect: the inspector searched only
+`EFI/Linux/*.efi`, while this image's documented layout nests its composefs UKI
+under `EFI/Linux/bootc/`. Discovery is now recursive below `EFI/Linux`; it still
+requires exactly one UKI and never copies or substitutes one after installation.
+
+The upstream `bcvk v0.10.0` disk path was also tested, but that version requires
+`/dev/kvm` for its ephemeral installer VM and cannot run on a standard GitHub-
+hosted runner. That infrastructure failure supplied no image or admission
+evidence and is not used as a bypass.
 
 ## Isolation
 

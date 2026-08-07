@@ -44,7 +44,7 @@ def inspect(
 ) -> dict:
     esp = esp.resolve()
     systemd_boot = esp / "EFI" / "systemd" / "systemd-bootx64.efi"
-    ukis = sorted((esp / "EFI" / "Linux").glob("*.efi"))
+    ukis = sorted((esp / "EFI" / "Linux").rglob("*.efi"))
     if len(ukis) != 1:
         raise RuntimeError(f"expected exactly one installed UKI, found {len(ukis)}")
     if not systemd_boot.is_file():
