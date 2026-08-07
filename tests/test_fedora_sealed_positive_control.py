@@ -208,13 +208,13 @@ def test_secure_boot_code_and_variable_template_remain_a_pinned_fedora_pair():
     assert "kojipkgs.fedoraproject.org/packages/edk2/20260213/4.fc44" in workflow
     assert "rpm2cpio ../edk2-ovmf.rpm" in workflow
     assert 'qemu-img convert -f qcow2 -O raw "$code_qcow2" "$code"' in workflow
-    assert 'qemu-img convert -f qcow2 -O raw "$template_qcow2" "$template"' in workflow
-    assert "--set-pk" in workflow
-    assert "--add-kek" in workflow
-    assert "--add-db" in workflow
+    assert "ATTESTOS_FEDORA_OVMF_VARS_SHA256:" in workflow
+    assert 'fedora-output/OVMF_VARS_CUSTOM.qcow2' in workflow
+    assert "--set-pk" not in workflow
+    assert "--add-kek" not in workflow
+    assert "--add-db" not in workflow
     assert "--extract-certs" in workflow
     assert "ATTESTOS_FEDORA_OVMF_CODE=$code" in workflow
-    assert "OVMF_VARS_CUSTOM.qcow2" not in workflow
     assert "ATTESTOS_FEDORA_OVMF_CODE" in runner
 
 
@@ -238,6 +238,12 @@ def test_probe_unit_is_explicitly_outside_sealed_usr_and_non_authoritative():
     assert "production_trusted: false" in builder
     assert "ConditionPathExists=/dev/vdb" in unit
     assert "/etc/attestos-positive-control/fedora_sealed_guest_probe.py" in unit
+
+
+def test_firmware_rejection_stops_without_waiting_for_global_timeout():
+    runner = (ROOT / "scripts/run_fedora_sealed_positive_control.sh").read_text()
+    assert "Secure Boot firmware rejected the installed UKI" in runner
+    assert "exit 80" in runner
 
 
 def test_cli_enforcement_writes_failure_receipt(tmp_path):

@@ -42,6 +42,8 @@ without the loaded-path identity join cannot pass.
   `edk2-20260213-4.fc44`
 - Fedora Koji `edk2-ovmf` RPM SHA-256:
   `09aaf8eea949070e864233d09480a7e88cb3b51f58c8adb9bb2e2176bddb0083`
+- Upstream Fedora-generated OVMF variable store SHA-256:
+  `07029be230ad284b910e94e16dbd05f5b495f194dea90629bfdf94cb390b853b`
 - Vendored Cosign public key SHA-256:
   `454e4bc8d59d3c356d193a006d2dbf98a2cbdac6db7e3320da2c57590b6e3ba4`
 - Vendored Secure Boot DB certificate SHA-256:
@@ -58,10 +60,11 @@ not be mixed with another distribution's OVMF code. A failed run proved that an
 Ubuntu code/template pair still rejected this unusually large composefs UKI
 despite containing the exact upstream db certificate. The canary therefore
 extracts the exact Fedora 44 `edk2-ovmf` build that was current in Koji when the
-image was created, converts its code/template pair together, enrolls the frozen
-upstream PK/KEK/db certificates, and extracts the resulting store to verify all
-three DER fingerprints before boot. The RPM, firmware code, template, and
-derived variable-store hashes are preserved in the receipt.
+image was created and pairs its firmware code with the upstream project's own
+frozen Fedora-generated variable store. The workflow extracts that store to
+verify all three PK/KEK/db DER fingerprints before boot. The RPM, firmware code,
+source variable store, and converted raw-store hashes are preserved in the
+receipt.
 
 This historical candidate replaces the August 3 image after three fail-closed
 runs proved that image internally inconsistent for installation. Its UKI

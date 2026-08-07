@@ -84,10 +84,18 @@ python3 scripts/drive_fedora_sealed_console.py \
 driver_pid=$!
 
 while kill -0 "$qemu_pid" >/dev/null 2>&1; do
-    sleep 30
+    sleep 10
     printf 'guest_progress serial_bytes=%s probe_attempts=%s\n' \
         "$(stat -c %s "$serial" 2>/dev/null || echo 0)" \
         "$(grep -c console_probe_attempt "$output/console-driver.log" 2>/dev/null || true)"
+    if grep -aEq 'Error loading EFI binary .*: Access denied|failed to start .*: Access Denied' "$serial"; then
+        echo "Secure Boot firmware rejected the installed UKI" >&2
+        kill "$qemu_pid" >/dev/null 2>&1 || true
+        wait "$qemu_pid" >/dev/null 2>&1 || true
+        qemu_pid=""
+        tail -120 "$serial" >&2 || true
+        exit 80
+    fi
 done
 wait "$qemu_pid"
 qemu_rc=$?
