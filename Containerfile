@@ -1,3 +1,5 @@
+ARG BASE_IMAGE=ghcr.io/ublue-os/bazzite:stable
+
 # Build context for scripts and files, never copied into the final image.
 FROM scratch AS ctx
 COPY build_files /
@@ -7,7 +9,6 @@ COPY system_files /system_files
 # currently blocked by anti-cheat whitelists, so proving attestation here is
 # the case worth proving. Building on SteamOS would demonstrate nothing,
 # because SteamOS is already allowed.
-ARG BASE_IMAGE=ghcr.io/ublue-os/bazzite:stable
 FROM ${BASE_IMAGE}
 
 ARG ATTESTOS_SOURCE_COMMIT=unknown
