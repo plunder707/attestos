@@ -71,6 +71,20 @@ sudo mount "$esp" "$mount_root/boot"
 
 sudo podman pull "$source_reference"
 sudo podman pull "$installer_reference"
+prepare_root="$output/source-prepare-root.conf"
+sudo podman run \
+    --rm \
+    --network=none \
+    "$source_reference" \
+    sh -c 'for path in /usr/lib/ostree/prepare-root.conf /etc/ostree/prepare-root.conf; do
+        if test -f "$path"; then
+            cat "$path"
+            exit 0
+        fi
+    done
+    exit 1' > "$prepare_root"
+[[ -s "$prepare_root" ]] || { echo "source prepare-root.conf is empty" >&2; exit 1; }
+sha256sum "$prepare_root" > "$output/source-prepare-root.sha256"
 sudo podman run \
     --rm \
     --privileged \
@@ -81,6 +95,7 @@ sudo podman run \
     -v /var/lib/containers:/var/lib/containers \
     -v /dev:/dev \
     -v /:/run/host \
+    -v "$prepare_root:/usr/lib/ostree/prepare-root.conf:ro" \
     "$installer_reference" \
     bootc install to-filesystem \
         --source-imgref="containers-storage:$source_reference" \

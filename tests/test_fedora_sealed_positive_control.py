@@ -165,6 +165,14 @@ def test_workflow_and_runner_preserve_isolation_and_nonpublication():
     ).read_text()
 
 
+def test_version_matched_installer_uses_source_prepare_root_contract():
+    builder = (ROOT / "scripts/build_fedora_sealed_disk.sh").read_text()
+    assert '"$source_reference"' in builder
+    assert "sh -c 'for path in" in builder
+    assert '/usr/lib/ostree/prepare-root.conf:ro' in builder
+    assert 'source-prepare-root.sha256' in builder
+
+
 def test_cli_enforcement_writes_failure_receipt(tmp_path):
     static = static_evidence()
     guest = guest_evidence()

@@ -49,7 +49,9 @@ contains Fedora `bootc` 1.16.6, which computes a different composefs digest and
 correctly refuses that UKI. The canary therefore runs the install with the
 exact signed tools image that created the digest. Both image references are
 immutable, independently verified, and joined in the receipt; no digest check
-is disabled.
+is disabled. The tools image is deliberately minimal, so the installer receives
+only `ostree/prepare-root.conf` extracted from the verified source image. Its
+hash is retained with the canary evidence.
 
 ## Isolation
 

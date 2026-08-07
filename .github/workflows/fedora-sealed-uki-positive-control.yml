@@ -181,6 +181,8 @@ jobs:
             fedora-output/source-signature.json
             fedora-output/installer-manifest.json
             fedora-output/installer-signature.json
+            fedora-output/source-prepare-root.conf
+            fedora-output/source-prepare-root.sha256
             fedora-output/provenance.json
             fedora-output/static-inspection.json
             fedora-output/guest-evidence.json
