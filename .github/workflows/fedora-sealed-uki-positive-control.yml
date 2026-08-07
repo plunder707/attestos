@@ -88,6 +88,7 @@ jobs:
           set -euxo pipefail
           python3 -m pytest -q
           bash -n scripts/build_fedora_sealed_disk.sh
+          bash -n scripts/prepare_fedora_sealed_compat_control.sh
           bash -n scripts/run_fedora_sealed_positive_control.sh
 
       - name: Install Cosign
@@ -240,19 +241,95 @@ jobs:
             fedora-output/fedora-sealed.qcow2 \
             fedora-output
 
-      - name: Boot networkless positive control and collect evidence
+      - name: Confirm frozen upstream UKI admission rejection
+        run: |
+          set -uo pipefail
+          set +e
+          bash scripts/run_fedora_sealed_positive_control.sh \
+            fedora-output/fedora-sealed.qcow2 \
+            fedora-output/upstream-admission
+          rc=$?
+          set -e
+          [[ $rc -eq 80 ]]
+          jq -n \
+            --argjson exit_status "$rc" \
+            '{
+              format: "attestos.fedora_sealed_upstream_admission/v1",
+              admitted: false,
+              exit_status: $exit_status,
+              failure: "firmware_security_violation",
+              upstream_db_rsa_bits: 4096,
+              manufacturer_trusted: false,
+              policy_trusted: false,
+              production_trusted: false
+            }' > fedora-output/upstream-admission.json
+
+      - name: Prepare run-local RSA-2048 compatibility control
+        run: |
+          set -euxo pipefail
+          owner_guid=$(cat fedora-output/secureboot-guid)
+          openssl req \
+            -new \
+            -x509 \
+            -newkey rsa:2048 \
+            -nodes \
+            -sha256 \
+            -days 1 \
+            -subj '/CN=attestos ephemeral CI compatibility key/' \
+            -keyout fedora-output/canary-signing.key \
+            -out fedora-output/canary-signing.pem
+          openssl x509 \
+            -in fedora-output/canary-signing.pem \
+            -outform DER \
+            -out fedora-output/canary-signing.der
+
+          virt-fw-vars \
+            --input fedora-output/OVMF_VARS_CUSTOM.fd \
+            --output fedora-output/OVMF_VARS_COMPAT.fd \
+            --add-db "$owner_guid" fedora-output/canary-signing.pem \
+            --sb
+          virt-fw-vars \
+            --input fedora-output/OVMF_VARS_COMPAT.fd \
+            --output-json fedora-output/compat-firmware-vars.json
+          mkdir fedora-output/compat-certs
+          (
+            cd fedora-output/compat-certs
+            virt-fw-vars --input ../OVMF_VARS_COMPAT.fd --extract-certs
+          )
+          expected=$(sha256sum fedora-output/canary-signing.der | cut -d' ' -f1)
+          found=false
+          for cert in fedora-output/compat-certs/*.pem; do
+            actual=$(openssl x509 -in "$cert" -outform DER | sha256sum | cut -d' ' -f1)
+            [[ "$actual" == "$expected" ]] && found=true
+          done
+          [[ "$found" == true ]]
+
+          mv fedora-output/static-inspection.json \
+            fedora-output/upstream-static-inspection.json
+          bash scripts/prepare_fedora_sealed_compat_control.sh \
+            fedora-output/fedora-sealed.qcow2 \
+            fedora-output \
+            trust/fedora-sealed-secureboot-db.pem \
+            fedora-output/canary-signing.key \
+            fedora-output/canary-signing.pem
+          rm -f fedora-output/canary-signing.key
+          test ! -e fedora-output/canary-signing.key
+          echo "ATTESTOS_FEDORA_OVMF_VARS=$PWD/fedora-output/OVMF_VARS_COMPAT.fd" \
+            >> "$GITHUB_ENV"
+
+      - name: Boot networkless compatibility control and collect evidence
         run: |
           set -euxo pipefail
           bash scripts/run_fedora_sealed_positive_control.sh \
             fedora-output/fedora-sealed.qcow2 \
-            fedora-output
+            fedora-output/compat-boot
 
       - name: Evaluate exact loaded UKI and PCR 11 joins
         run: |
           set -euxo pipefail
           python3 scripts/validate_fedora_sealed_positive_control.py \
             --static fedora-output/static-inspection.json \
-            --guest fedora-output/guest-evidence.json \
+            --guest fedora-output/compat-boot/guest-evidence.json \
             --provenance fedora-output/provenance.json \
             --output fedora-output/positive-control.json
 
@@ -273,13 +350,20 @@ jobs:
             fedora-output/firmware-vars.json
             fedora-output/firmware-provenance.json
             fedora-output/probe-installation.json
+            fedora-output/upstream-static-inspection.json
+            fedora-output/upstream-admission.json
+            fedora-output/upstream-admission/serial.log
+            fedora-output/compat-resign.json
+            fedora-output/compat-firmware-vars.json
+            fedora-output/canary-signing.pem
+            fedora-output/canary-signing.der
             fedora-output/static-inspection.json
-            fedora-output/guest-evidence.json
+            fedora-output/compat-boot/guest-evidence.json
             fedora-output/positive-control.json
             fedora-output/disk.sha256
-            fedora-output/serial.log
-            fedora-output/console-driver.log
-            fedora-output/debugfs.log
+            fedora-output/compat-boot/serial.log
+            fedora-output/compat-boot/console-driver.log
+            fedora-output/compat-boot/debugfs.log
           if-no-files-found: warn
           retention-days: 14
           compression-level: 9
@@ -289,7 +373,7 @@ jobs:
           set -euo pipefail
           python3 scripts/validate_fedora_sealed_positive_control.py \
             --static fedora-output/static-inspection.json \
-            --guest fedora-output/guest-evidence.json \
+            --guest fedora-output/compat-boot/guest-evidence.json \
             --provenance fedora-output/provenance.json \
             --output fedora-output/positive-control.json \
             --enforce

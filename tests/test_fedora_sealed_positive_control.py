@@ -198,7 +198,7 @@ def test_historical_control_binds_source_and_installer_to_one_digest():
     assert "source-inspection.json" in workflow
 
 
-def test_secure_boot_code_and_variable_template_remain_a_pinned_fedora_pair():
+def test_upstream_pair_is_frozen_and_compatibility_arm_is_non_authoritative():
     workflow = (
         ROOT / ".github/workflows/fedora-sealed-uki-positive-control.yml"
     ).read_text()
@@ -212,8 +212,14 @@ def test_secure_boot_code_and_variable_template_remain_a_pinned_fedora_pair():
     assert 'fedora-output/OVMF_VARS_CUSTOM.qcow2' in workflow
     assert "--set-pk" not in workflow
     assert "--add-kek" not in workflow
-    assert "--add-db" not in workflow
+    assert '--add-db "$owner_guid" fedora-output/canary-signing.pem' in workflow
     assert "--extract-certs" in workflow
+    assert "[[ $rc -eq 80 ]]" in workflow
+    assert "upstream_db_rsa_bits: 4096" in workflow
+    assert "rm -f fedora-output/canary-signing.key" in workflow
+    assert "fedora-output/canary-signing.key" not in workflow.split(
+        "path: |", 1
+    )[1]
     assert "ATTESTOS_FEDORA_OVMF_CODE=$code" in workflow
     assert "ATTESTOS_FEDORA_OVMF_CODE" in runner
 
@@ -244,6 +250,21 @@ def test_firmware_rejection_stops_without_waiting_for_global_timeout():
     runner = (ROOT / "scripts/run_fedora_sealed_positive_control.sh").read_text()
     assert "Secure Boot firmware rejected the installed UKI" in runner
     assert "exit 80" in runner
+
+
+def test_compatibility_resign_preserves_upstream_signature_as_a_separate_gate():
+    preparer = (
+        ROOT / "scripts/prepare_fedora_sealed_compat_control.sh"
+    ).read_text()
+    assert 'sbverify --cert "$upstream_cert" "$work/original.efi"' in preparer
+    assert 'sbattach --remove "$work/resigned.efi"' in preparer
+    assert 'sbsign \\' in preparer
+    assert 'cmp "$work/original.cmdline" "$work/signed.cmdline"' in preparer
+    assert 'purpose: "harness_compatibility_positive_control_only"' in preparer
+    assert "private_key_persisted: false" in preparer
+    assert "manufacturer_trusted: false" in preparer
+    assert "policy_trusted: false" in preparer
+    assert "production_trusted: false" in preparer
 
 
 def test_cli_enforcement_writes_failure_receipt(tmp_path):
