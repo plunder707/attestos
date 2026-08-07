@@ -11,17 +11,26 @@ source_vars=$(realpath "$1")
 output_vars=$(realpath -m "$2")
 output=$(realpath -m "$3")
 source_reference=${ATTESTOS_FEDORA_IMAGE_REFERENCE:?missing immutable image reference}
+systemd_nvr=${ATTESTOS_SYSTEMD_NVR:?missing pinned systemd NVR}
+ukify_rpm_sha256=${ATTESTOS_SYSTEMD_UKIFY_RPM_SHA256:?missing ukify RPM digest}
+boot_rpm_sha256=${ATTESTOS_SYSTEMD_BOOT_UNSIGNED_RPM_SHA256:?missing boot RPM digest}
+expected_ukify_sha256=${ATTESTOS_SYSTEMD_UKIFY_SHA256:?missing ukify file digest}
+expected_stub_sha256=${ATTESTOS_SYSTEMD_ADDON_STUB_SHA256:?missing add-on stub digest}
+ukify=$(realpath "${ATTESTOS_FEDORA_UKIFY:?missing pinned Fedora ukify}")
+addon_stub=$(realpath "${ATTESTOS_FEDORA_ADDON_STUB:?missing pinned Fedora add-on stub}")
 policy='lockdown=confidentiality module.sig_enforce=1'
 owner_guid='9d4f4ef8-5f6d-4a73-9b2c-90c8e6c2e6f1'
 work=$(mktemp -d -p /tmp attestos-pcr12-addon.XXXXXX)
 mkdir -p "$output" "$(dirname "$output_vars")"
 
-for command in jq objcopy objdump openssl podman sbverify sha256sum virt-fw-vars; do
+for command in jq objcopy objdump openssl python3 sbverify sha256sum virt-fw-vars; do
     command -v "$command" >/dev/null || {
         echo "missing required command: $command" >&2
         exit 1
     }
 done
+[[ "$(sha256sum "$ukify" | cut -d' ' -f1)" == "$expected_ukify_sha256" ]]
+[[ "$(sha256sum "$addon_stub" | cut -d' ' -f1)" == "$expected_stub_sha256" ]]
 
 cleanup() {
     rm -rf "$work"
@@ -33,27 +42,14 @@ openssl req -new -newkey rsa:2048 -nodes -x509 -sha256 -days 1 \
     -keyout "$work/addon.key" \
     -out "$work/addon.pem" >/dev/null 2>&1
 
-sudo podman run \
-    --rm \
-    --network=none \
-    -e "ATTESTOS_POLICY=$policy" \
-    -v "$work:/work:rw,Z" \
-    "$source_reference" \
-    sh -eu -c '
-        ukify=$(command -v ukify || true)
-        if test -z "$ukify"; then
-            ukify=/usr/lib/systemd/ukify
-        fi
-        test -x "$ukify"
-        exec "$ukify" build \
-            --secureboot-private-key=/work/addon.key \
-            --secureboot-certificate=/work/addon.pem \
-            --cmdline="$ATTESTOS_POLICY" \
-            --sbat="sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md
+python3 "$ukify" build \
+    --stub="$addon_stub" \
+    --secureboot-private-key="$work/addon.key" \
+    --secureboot-certificate="$work/addon.pem" \
+    --cmdline="$policy" \
+    --sbat="sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md
 attestos-addon,1,attestos PCR12 canary,attestos-addon,1,https://github.com/plunder707/attestos" \
-            --output=/work/10-attestos-policy.addon.efi
-    '
-sudo chown -R "$(id -u):$(id -g)" "$work"
+    --output="$work/10-attestos-policy.addon.efi"
 
 addon="$work/10-attestos-policy.addon.efi"
 test -s "$addon"
@@ -134,6 +130,11 @@ rm -f "$work/addon.key"
 
 jq -n \
     --arg source_reference "$source_reference" \
+    --arg systemd_nvr "$systemd_nvr" \
+    --arg ukify_rpm_sha256 "$ukify_rpm_sha256" \
+    --arg boot_rpm_sha256 "$boot_rpm_sha256" \
+    --arg ukify_sha256 "$expected_ukify_sha256" \
+    --arg addon_stub_sha256 "$expected_stub_sha256" \
     --arg policy "$policy" \
     --arg owner_guid "$owner_guid" \
     --arg addon_sha256 "$(sha256sum "$addon" | cut -d' ' -f1)" \
@@ -149,6 +150,13 @@ jq -n \
       format: "attestos.fedora_pcr12_addon_static/v1",
       purpose: "disposable_pcr12_addon_harness_only",
       source_reference: $source_reference,
+      builder: {
+        systemd_nvr: $systemd_nvr,
+        ukify_rpm_sha256: $ukify_rpm_sha256,
+        boot_unsigned_rpm_sha256: $boot_rpm_sha256,
+        ukify_sha256: $ukify_sha256,
+        addon_stub_sha256: $addon_stub_sha256
+      },
       addon: {
         name: "10-attestos-policy.addon.efi",
         uefi_path: "\\loader\\addons\\10-attestos-policy.addon.efi",

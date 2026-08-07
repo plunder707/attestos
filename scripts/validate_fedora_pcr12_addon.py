@@ -13,6 +13,13 @@ FORMAT = "attestos.fedora_pcr12_addon_canary/v1"
 ZERO_SHA256 = "0" * 64
 POLICY_TOKENS = ("lockdown=confidentiality", "module.sig_enforce=1")
 TRUST_KEYS = ("manufacturer_trusted", "policy_trusted", "production_trusted")
+BUILDER = {
+    "systemd_nvr": "systemd-259.5-1.fc44",
+    "ukify_rpm_sha256": "88cab2599d0f3c673bc4e4b32316682196e3be6c8376f39cd77ad5af52cca4db",
+    "boot_unsigned_rpm_sha256": "a392ae378b3b6b2d2cee9233c1f3aa2333c8f9f95f65c0b30724840706a29f3f",
+    "ukify_sha256": "33c1bc2a0143ac287fe2300ef6177ea4f8e6ccaa71fab8ad44741e2d5a8a7edd",
+    "addon_stub_sha256": "23370bb3685f804f5c722648379f3dcbe4474998030b1595ee85690e38350ce5",
+}
 
 
 class EvidenceError(RuntimeError):
@@ -147,6 +154,7 @@ def evaluate(
     static_uki = static.get("uki", {})
     uki_sha256 = digest(static_uki.get("sha256"))
     addon = addon_static.get("addon", {})
+    builder = addon_static.get("builder", {})
     tamper_static = addon_static.get("tamper", {})
     mutation = tamper_static.get("mutation", {})
     signed_addon_sha256 = digest(addon.get("sha256"))
@@ -178,6 +186,7 @@ def evaluate(
             and addon_static.get("private_key_persisted") is False
             and addon_static.get("source_reference") == static.get("source_reference")
         ),
+        "pinned_matching_addon_builder": builder == BUILDER,
         "extended_variable_store_contract": (
             firmware.get("format") == "attestos.fedora_sealed_firmware/v1"
             and addon_static.get("variable_store", {}).get("source_sha256") ==

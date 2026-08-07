@@ -33,6 +33,11 @@ all four arms. The preparer proves the original certificates remain present,
 the new certificate appears exactly once, and no private key is persisted or
 uploaded.
 
+The add-on is authored with Fedora's exact `systemd-ukify-259.5-1.fc44` and
+matching `systemd-boot-unsigned-259.5-1.fc44` add-on stub. Both RPMs and both
+extracted files are SHA-256 pinned before key generation. This avoids assuming
+that the immutable runtime image also contains build tooling.
+
 ## Admission Gates
 
 All gates must pass:

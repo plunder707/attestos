@@ -46,6 +46,11 @@ env:
   ATTESTOS_FEDORA_EDK2_NVR: edk2-20260213-4.fc44
   ATTESTOS_FEDORA_EDK2_OVMF_RPM_SHA256: 09aaf8eea949070e864233d09480a7e88cb3b51f58c8adb9bb2e2176bddb0083
   ATTESTOS_FEDORA_OVMF_VARS_SHA256: 07029be230ad284b910e94e16dbd05f5b495f194dea90629bfdf94cb390b853b
+  ATTESTOS_SYSTEMD_NVR: systemd-259.5-1.fc44
+  ATTESTOS_SYSTEMD_UKIFY_RPM_SHA256: 88cab2599d0f3c673bc4e4b32316682196e3be6c8376f39cd77ad5af52cca4db
+  ATTESTOS_SYSTEMD_BOOT_UNSIGNED_RPM_SHA256: a392ae378b3b6b2d2cee9233c1f3aa2333c8f9f95f65c0b30724840706a29f3f
+  ATTESTOS_SYSTEMD_UKIFY_SHA256: 33c1bc2a0143ac287fe2300ef6177ea4f8e6ccaa71fab8ad44741e2d5a8a7edd
+  ATTESTOS_SYSTEMD_ADDON_STUB_SHA256: 23370bb3685f804f5c722648379f3dcbe4474998030b1595ee85690e38350ce5
 
 jobs:
   positive-control:
@@ -76,6 +81,7 @@ jobs:
             ovmf \
             parted \
             podman \
+            python3-pefile \
             python3-jsonschema \
             python3-pytest \
             python3-virt-firmware \
@@ -100,6 +106,37 @@ jobs:
           bash -n scripts/prepare_fedora_pcr12_addon.sh
           bash -n scripts/run_fedora_sealed_positive_control.sh
           bash -n scripts/tamper_fedora_sealed_uki.sh
+
+      - name: Pin matching Fedora systemd add-on builder
+        run: |
+          set -euxo pipefail
+          root="$PWD/fedora-output/systemd-builder"
+          mkdir -p "$root/rpms" "$root/root"
+          base=https://kojipkgs.fedoraproject.org/packages/systemd/259.5/1.fc44
+          curl --fail --location --silent --show-error \
+            "$base/noarch/systemd-ukify-259.5-1.fc44.noarch.rpm" \
+            --output "$root/rpms/systemd-ukify.rpm"
+          curl --fail --location --silent --show-error \
+            "$base/x86_64/systemd-boot-unsigned-259.5-1.fc44.x86_64.rpm" \
+            --output "$root/rpms/systemd-boot-unsigned.rpm"
+          echo "$ATTESTOS_SYSTEMD_UKIFY_RPM_SHA256  $root/rpms/systemd-ukify.rpm" \
+            | sha256sum --check --strict
+          echo "$ATTESTOS_SYSTEMD_BOOT_UNSIGNED_RPM_SHA256  $root/rpms/systemd-boot-unsigned.rpm" \
+            | sha256sum --check --strict
+          (
+            cd "$root/root"
+            rpm2cpio ../rpms/systemd-ukify.rpm | cpio -idm --quiet
+            rpm2cpio ../rpms/systemd-boot-unsigned.rpm | cpio -idm --quiet
+          )
+          ukify="$root/root/usr/bin/ukify"
+          stub="$root/root/usr/lib/systemd/boot/efi/addonx64.efi.stub"
+          test -x "$ukify"
+          test -s "$stub"
+          echo "$ATTESTOS_SYSTEMD_UKIFY_SHA256  $ukify" | sha256sum --check --strict
+          echo "$ATTESTOS_SYSTEMD_ADDON_STUB_SHA256  $stub" | sha256sum --check --strict
+          python3 "$ukify" --version
+          echo "ATTESTOS_FEDORA_UKIFY=$ukify" >> "$GITHUB_ENV"
+          echo "ATTESTOS_FEDORA_ADDON_STUB=$stub" >> "$GITHUB_ENV"
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2

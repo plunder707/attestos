@@ -55,6 +55,13 @@ def addon_static() -> dict:
         "format": "attestos.fedora_pcr12_addon_static/v1",
         "purpose": "disposable_pcr12_addon_harness_only",
         "source_reference": "example.invalid/fedora@sha256:" + "6" * 64,
+        "builder": {
+            "systemd_nvr": "systemd-259.5-1.fc44",
+            "ukify_rpm_sha256": "88cab2599d0f3c673bc4e4b32316682196e3be6c8376f39cd77ad5af52cca4db",
+            "boot_unsigned_rpm_sha256": "a392ae378b3b6b2d2cee9233c1f3aa2333c8f9f95f65c0b30724840706a29f3f",
+            "ukify_sha256": "33c1bc2a0143ac287fe2300ef6177ea4f8e6ccaa71fab8ad44741e2d5a8a7edd",
+            "addon_stub_sha256": "23370bb3685f804f5c722648379f3dcbe4474998030b1595ee85690e38350ce5",
+        },
         "addon": {
             "name": "10-attestos-policy.addon.efi",
             "uefi_path": "\\loader\\addons\\10-attestos-policy.addon.efi",
@@ -251,7 +258,8 @@ def test_scripts_preserve_nonpublication_and_private_key_boundary():
     workflow = (
         ROOT / ".github/workflows/fedora-sealed-uki-positive-control.yml"
     ).read_text()
-    assert "--network=none" in preparer
+    assert 'python3 "$ukify" build' in preparer
+    assert '--stub="$addon_stub"' in preparer
     assert "--add-db" in preparer
     assert "private_key_persisted: false" in preparer
     assert 'rm -f "$work/addon.key"' in preparer
