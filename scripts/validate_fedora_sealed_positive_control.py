@@ -116,7 +116,13 @@ def evaluate(
             compatibility.get("compatibility_signed_uki_sha256") and
             digest(tamper.get("tampered_uki_sha256")) is not None and
             tamper.get("tampered_uki_sha256") !=
-            tamper.get("original_uki_sha256")
+            tamper.get("original_uki_sha256") and
+            digest(tamper.get("original_cmdline_sha256")) is not None and
+            tamper.get("original_cmdline_sha256") ==
+            compatibility.get("embedded_cmdline_sha256") and
+            digest(tamper.get("tampered_cmdline_sha256")) is not None and
+            tamper.get("tampered_cmdline_sha256") !=
+            tamper.get("original_cmdline_sha256")
         ),
         "guest_probe_success": guest.get("success") is True,
         "secure_boot_enabled": guest.get("secure_boot_enabled") is True,

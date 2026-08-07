@@ -347,10 +347,6 @@ jobs:
           jq '.firmware_rejected = true' \
             fedora-output/compat-tamper/tamper-preboot.json \
             > fedora-output/compat-tamper/tamper-admission.json
-          tmp=$(mktemp)
-          jq '.uki.tampered_cmdline_firmware_rejected = true' \
-            fedora-output/static-inspection.json > "$tmp"
-          mv "$tmp" fedora-output/static-inspection.json
           rm -f fedora-output/compat-tamper.qcow2
 
       - name: Boot networkless compatibility control and collect evidence

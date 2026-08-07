@@ -112,6 +112,8 @@ def tamper_evidence() -> dict:
         "mutation": "embedded_cmdline_without_resigning",
         "original_uki_sha256": UKI,
         "tampered_uki_sha256": "f" * 64,
+        "original_cmdline_sha256": "b" * 64,
+        "tampered_cmdline_sha256": "e" * 64,
         "firmware_rejected": True,
         "manufacturer_trusted": False,
         "policy_trusted": False,
@@ -228,6 +230,17 @@ def test_compatibility_receipt_must_bind_signing_inputs(field):
 def test_tamper_receipt_must_bind_exact_signed_hash_and_firmware_rejection():
     tamper = tamper_evidence()
     tamper["firmware_rejected"] = False
+    result = validator.evaluate(
+        static_evidence(), guest_evidence(), provenance(),
+        compatibility_evidence(), tamper
+    )
+    assert result["passed"] is False
+    assert result["gates"]["tampered_cmdline_firmware_rejected"] is False
+
+
+def test_tamper_receipt_must_bind_the_normalized_embedded_cmdline():
+    tamper = tamper_evidence()
+    tamper["original_cmdline_sha256"] = "a" * 64
     result = validator.evaluate(
         static_evidence(), guest_evidence(), provenance(),
         compatibility_evidence(), tamper
@@ -386,10 +399,13 @@ def test_tamper_negative_changes_exact_signed_uki_in_throwaway_overlay():
     ).read_text()
     assert '[[ "$original_sha256" == "$expected_sha256" ]]' in tamper
     assert "attestos_tamper=1" in tamper
+    assert '.read_bytes().rstrip(b"\\0")' in tamper
+    assert '[[ "$tampered_cmdline_sha256" != "$original_cmdline_sha256" ]]' in tamper
     assert '[[ "$tampered_sha256" != "$original_sha256" ]]' in tamper
     assert "fedora-output/compat-tamper.qcow2" in workflow
     assert "[[ $rc -eq 80 ]]" in workflow
-    assert ".uki.tampered_cmdline_firmware_rejected = true" in workflow
+    assert ".firmware_rejected = true" in workflow
+    assert "--tamper fedora-output/compat-tamper/tamper-admission.json" in workflow
 
 
 def test_cli_enforcement_writes_failure_receipt(tmp_path):
