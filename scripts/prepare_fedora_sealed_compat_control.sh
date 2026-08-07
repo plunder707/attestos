@@ -18,7 +18,7 @@ mount_root=$(mktemp -d -p /tmp attestos-fedora-compat.XXXXXX)
 nbd=""
 mkdir -p "$output"
 
-for command in objcopy openssl qemu-img qemu-nbd sbattach sbsign sbverify; do
+for command in jq objcopy openssl qemu-img qemu-nbd sbattach sbsign sbverify; do
     command -v "$command" >/dev/null || {
         echo "missing required command: $command" >&2
         exit 1
@@ -58,8 +58,19 @@ mapfile -t ukis < <(sudo find "$mount_root/EFI/Linux" -type f -name '*.efi' -pri
 uki=${ukis[0]}
 work=$(mktemp -d -p /tmp attestos-fedora-sign.XXXXXX)
 trap 'rm -rf "$work"; cleanup' EXIT
-sudo cp "$uki" "$work/original.efi"
+expected_sha256=$(jq -r '.uki.sha256' "$output/upstream-static-inspection.json")
+source_sha256=$(sudo sha256sum "$uki" | cut -d' ' -f1)
+source_size=$(sudo stat -c %s "$uki")
+printf 'compat_source size=%s sha256=%s expected_sha256=%s\n' \
+    "$source_size" "$source_sha256" "$expected_sha256"
+[[ "$source_sha256" == "$expected_sha256" ]]
+sudo sbverify --cert "$upstream_cert" "$uki"
+sudo dd if="$uki" of="$work/original.efi" bs=4M status=none conv=fsync
 sudo chown "$(id -u):$(id -g)" "$work/original.efi"
+copy_sha256=$(sha256sum "$work/original.efi" | cut -d' ' -f1)
+copy_size=$(stat -c %s "$work/original.efi")
+printf 'compat_copy size=%s sha256=%s\n' "$copy_size" "$copy_sha256"
+[[ "$copy_sha256" == "$expected_sha256" ]]
 
 sbverify --cert "$upstream_cert" "$work/original.efi"
 objcopy --dump-section .cmdline="$work/original.cmdline" "$work/original.efi"

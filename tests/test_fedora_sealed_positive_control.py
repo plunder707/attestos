@@ -260,6 +260,9 @@ def test_compatibility_resign_preserves_upstream_signature_as_a_separate_gate():
         ROOT / "scripts/prepare_fedora_sealed_compat_control.sh"
     ).read_text()
     assert 'sbverify --cert "$upstream_cert" "$work/original.efi"' in preparer
+    assert 'source_sha256=$(sudo sha256sum "$uki"' in preparer
+    assert '[[ "$source_sha256" == "$expected_sha256" ]]' in preparer
+    assert '[[ "$copy_sha256" == "$expected_sha256" ]]' in preparer
     assert 'sbattach --remove "$work/resigned.efi"' in preparer
     assert 'sbsign \\' in preparer
     assert 'cmp "$work/original.cmdline" "$work/signed.cmdline"' in preparer
