@@ -34,6 +34,7 @@ trap cleanup EXIT
 # This is the exact disk-construction interface documented by the frozen
 # upstream source. No composefs or boot-finalization check is skipped.
 rm -f "$disk"
+podman pull "$source_reference"
 "$bcvk" to-disk \
     --filesystem=btrfs \
     --composefs-backend \

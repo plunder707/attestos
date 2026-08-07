@@ -178,6 +178,7 @@ def test_workflow_and_runner_preserve_isolation_and_nonpublication():
     assert "-enable-kvm" not in runner
     builder = (ROOT / "scripts/build_fedora_sealed_disk.sh").read_text()
     assert '"$bcvk" to-disk' in builder
+    assert 'podman pull "$source_reference"' in builder
     assert "podman push" not in builder
 
 
