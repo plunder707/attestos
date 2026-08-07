@@ -1,0 +1,329 @@
+---
+name: Fedora sealed UKI positive control
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'canary/fedora-sealed/**'
+      - 'trust/fedora-sealed-*'
+      - 'scripts/build_fedora_sealed_disk.sh'
+      - 'scripts/drive_fedora_sealed_console.py'
+      - 'scripts/fedora_sealed_guest_probe.py'
+      - 'scripts/inspect_fedora_sealed_disk.py'
+      - 'scripts/mutate_pe_cmdline.py'
+      - 'scripts/run_fedora_sealed_positive_control.sh'
+      - 'scripts/strip_pe_certificate_table.py'
+      - 'scripts/tamper_fedora_sealed_uki.sh'
+      - 'scripts/validate_fedora_sealed_positive_control.py'
+      - 'tests/test_fedora_sealed_positive_control.py'
+      - 'FEDORA_SEALED_POSITIVE_CONTROL.md'
+      - '.github/workflows/fedora-sealed-uki-positive-control.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fedora-sealed-positive-control-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ATTESTOS_FEDORA_SOURCE_COMMIT: a5daa80297a062e2ffa8f018264de3594842fac4
+  ATTESTOS_FEDORA_UPSTREAM_RUN_ID: '24482575655'
+  ATTESTOS_FEDORA_IMAGE_CREATED: '2026-04-15T23:00:51.271335521Z'
+  ATTESTOS_FEDORA_IMAGE_REFERENCE: quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d0e34c45cb33adbeee3ada65b33addbb30297eb938bdb7af35c67b63b7028eb7
+  ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE: quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d0e34c45cb33adbeee3ada65b33addbb30297eb938bdb7af35c67b63b7028eb7
+  ATTESTOS_FEDORA_PK_PEM_SHA256: ebb379ce8b02d49ba1969935793b282e01e0c208b769d06a0674164a972e0bab
+  ATTESTOS_FEDORA_KEK_PEM_SHA256: c264c2d7b9de792e778ba4cd8541ffb51d7c664e7b1f785fde9b613ae54f0537
+  ATTESTOS_FEDORA_GUID_SHA256: 94d712c748d49cfcd62ed3f8e1eb519fb0c8009340d30a29f26f80e75bc433f9
+  ATTESTOS_FEDORA_EDK2_NVR: edk2-20260213-4.fc44
+  ATTESTOS_FEDORA_EDK2_OVMF_RPM_SHA256: 09aaf8eea949070e864233d09480a7e88cb3b51f58c8adb9bb2e2176bddb0083
+  ATTESTOS_FEDORA_OVMF_VARS_SHA256: 07029be230ad284b910e94e16dbd05f5b495f194dea90629bfdf94cb390b853b
+
+jobs:
+  positive-control:
+    name: systemd-boot / loaded UKI / PCR 11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Maximize disposable runner space
+        uses: ublue-os/remove-unwanted-software@cc0becac701cf642c8f0a6613bbdaf5dc36b259e # v9
+        with:
+          remove-codeql: true
+
+      - name: Install canary dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            btrfs-progs \
+            cpio \
+            curl \
+            dosfstools \
+            e2fsprogs \
+            jq \
+            ovmf \
+            parted \
+            podman \
+            python3-jsonschema \
+            python3-pytest \
+            python3-virt-firmware \
+            qemu-system-x86 \
+            qemu-utils \
+            rpm2cpio \
+            sbsigntool \
+            skopeo \
+            swtpm \
+            swtpm-tools \
+            systemd \
+            tpm2-tools \
+            util-linux
+
+      - name: Validate positive-control contracts
+        run: |
+          set -euxo pipefail
+          python3 -m pytest -q
+          bash -n scripts/build_fedora_sealed_disk.sh
+          bash -n scripts/prepare_fedora_sealed_compat_control.sh
+          bash -n scripts/run_fedora_sealed_positive_control.sh
+          bash -n scripts/tamper_fedora_sealed_uki.sh
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
+      - name: Resolve immutable source and verify provenance
+        run: |
+          set -euxo pipefail
+          mkdir -p fedora-output
+          expected_digest="${ATTESTOS_FEDORA_IMAGE_REFERENCE##*@}"
+          skopeo inspect --raw \
+            "docker://$ATTESTOS_FEDORA_IMAGE_REFERENCE" \
+            > fedora-output/source-manifest.json
+          skopeo inspect \
+            "docker://$ATTESTOS_FEDORA_IMAGE_REFERENCE" \
+            > fedora-output/source-inspection.json
+          computed_digest="sha256:$(sha256sum fedora-output/source-manifest.json | cut -d' ' -f1)"
+          [[ "$computed_digest" == "$expected_digest" ]]
+          [[ "$(jq -r .Created fedora-output/source-inspection.json)" == \
+             "$ATTESTOS_FEDORA_IMAGE_CREATED" ]]
+          [[ "$(sha256sum trust/fedora-sealed-cosign.pub | cut -d' ' -f1)" == \
+             454e4bc8d59d3c356d193a006d2dbf98a2cbdac6db7e3320da2c57590b6e3ba4 ]]
+          [[ "$(sha256sum trust/fedora-sealed-secureboot-db.pem | cut -d' ' -f1)" == \
+             c23207f1db85578cb0a5f56fd3ca7ca1082f7a85f924ac85ac1cb9da7e2c176a ]]
+          cosign verify \
+            --key trust/fedora-sealed-cosign.pub \
+            "$ATTESTOS_FEDORA_IMAGE_REFERENCE" \
+            > fedora-output/source-signature.json
+
+          expected_installer_digest="${ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE##*@}"
+          skopeo inspect --raw \
+            "docker://$ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE" \
+            > fedora-output/installer-manifest.json
+          computed_installer_digest="sha256:$(sha256sum fedora-output/installer-manifest.json | cut -d' ' -f1)"
+          [[ "$computed_installer_digest" == "$expected_installer_digest" ]]
+          cosign verify \
+            --key trust/fedora-sealed-cosign.pub \
+            "$ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE" \
+            > fedora-output/installer-signature.json
+
+          jq -n \
+            --arg image_reference "$ATTESTOS_FEDORA_IMAGE_REFERENCE" \
+            --arg installer_reference "$ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE" \
+            --arg source_commit "$ATTESTOS_FEDORA_SOURCE_COMMIT" \
+            --arg upstream_run_id "$ATTESTOS_FEDORA_UPSTREAM_RUN_ID" \
+            --arg image_created "$ATTESTOS_FEDORA_IMAGE_CREATED" \
+            --arg manifest_sha256 "${computed_digest#sha256:}" \
+            --arg installer_manifest_sha256 "${computed_installer_digest#sha256:}" \
+            '{
+              format: "attestos.fedora_sealed_provenance/v1",
+              image_reference: $image_reference,
+              installer_reference: $installer_reference,
+              upstream_source_commit: $source_commit,
+              upstream_run_id: $upstream_run_id,
+              image_created: $image_created,
+              manifest_sha256: $manifest_sha256,
+              installer_manifest_sha256: $installer_manifest_sha256,
+              platform: {os: "linux", architecture: "amd64"}
+            }' > fedora-output/provenance.json
+
+      - name: Build and audit matched Secure Boot variable store
+        run: |
+          set -euxo pipefail
+          upstream="https://raw.githubusercontent.com/travier/fedora-atomic-desktops-sealed/${ATTESTOS_FEDORA_SOURCE_COMMIT}"
+          curl --fail --location --silent --show-error "$upstream/keys/GUID" \
+            --output fedora-output/secureboot-guid
+          curl --fail --location --silent --show-error "$upstream/keys/PK/PK.pem" \
+            --output fedora-output/secureboot-pk.pem
+          curl --fail --location --silent --show-error "$upstream/keys/KEK/KEK.pem" \
+            --output fedora-output/secureboot-kek.pem
+          curl --fail --location --silent --show-error "$upstream/OVMF_VARS_CUSTOM.qcow2" \
+            --output fedora-output/OVMF_VARS_CUSTOM.qcow2
+          echo "$ATTESTOS_FEDORA_GUID_SHA256  fedora-output/secureboot-guid" | sha256sum --check --strict
+          echo "$ATTESTOS_FEDORA_PK_PEM_SHA256  fedora-output/secureboot-pk.pem" | sha256sum --check --strict
+          echo "$ATTESTOS_FEDORA_KEK_PEM_SHA256  fedora-output/secureboot-kek.pem" | sha256sum --check --strict
+          echo "$ATTESTOS_FEDORA_OVMF_VARS_SHA256  fedora-output/OVMF_VARS_CUSTOM.qcow2" \
+            | sha256sum --check --strict
+
+          rpm_url="https://kojipkgs.fedoraproject.org/packages/edk2/20260213/4.fc44/noarch/edk2-ovmf-20260213-4.fc44.noarch.rpm"
+          curl --fail --location --silent --show-error "$rpm_url" \
+            --output fedora-output/edk2-ovmf.rpm
+          echo "$ATTESTOS_FEDORA_EDK2_OVMF_RPM_SHA256  fedora-output/edk2-ovmf.rpm" \
+            | sha256sum --check --strict
+          mkdir fedora-output/edk2-root
+          (
+            cd fedora-output/edk2-root
+            rpm2cpio ../edk2-ovmf.rpm | cpio -idm --quiet
+          )
+          code_qcow2="$PWD/fedora-output/edk2-root/usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.qcow2"
+          [[ -f "$code_qcow2" ]]
+          code="$PWD/fedora-output/OVMF_CODE_4M.secboot.fd"
+          qemu-img convert -f qcow2 -O raw "$code_qcow2" "$code"
+          qemu-img convert \
+            -f qcow2 \
+            -O raw \
+            fedora-output/OVMF_VARS_CUSTOM.qcow2 \
+            fedora-output/OVMF_VARS_CUSTOM.fd
+
+          virt-fw-vars \
+            --input fedora-output/OVMF_VARS_CUSTOM.fd \
+            --output-json fedora-output/firmware-vars.json
+
+          mkdir fedora-output/extracted-certs
+          (
+            cd fedora-output/extracted-certs
+            virt-fw-vars --input ../OVMF_VARS_CUSTOM.fd --extract-certs
+          )
+          for expected in \
+            c10c10a6309ea4544f04561edc3c12c22259e3d29ee30de70b65345b22b7cfd9 \
+            ace51bc81ad18ac6d6bf86a65960f714e3a29c4074d1ab8ee890139f544588af \
+            652a7d50464cf88bb0601fca90e603cded93083e6bdc9fab3cf17084dae1f524; do
+            found=false
+            for cert in fedora-output/extracted-certs/*.pem; do
+              actual=$(openssl x509 -in "$cert" -outform DER | sha256sum | cut -d' ' -f1)
+              [[ "$actual" == "$expected" ]] && found=true
+            done
+            [[ "$found" == true ]]
+          done
+
+          jq -n \
+            --arg code_path "$code" \
+            --arg code_sha256 "$(sha256sum "$code" | cut -d' ' -f1)" \
+            --arg vars_sha256 "$(sha256sum fedora-output/OVMF_VARS_CUSTOM.fd | cut -d' ' -f1)" \
+            --arg vars_source_sha256 "$ATTESTOS_FEDORA_OVMF_VARS_SHA256" \
+            --arg upstream_commit "$ATTESTOS_FEDORA_SOURCE_COMMIT" \
+            --arg edk2_nvr "$ATTESTOS_FEDORA_EDK2_NVR" \
+            --arg edk2_rpm_sha256 "$ATTESTOS_FEDORA_EDK2_OVMF_RPM_SHA256" \
+            --arg edk2_rpm_url "$rpm_url" \
+            '{
+              format: "attestos.fedora_sealed_firmware/v1",
+              edk2: {nvr: $edk2_nvr, rpm_sha256: $edk2_rpm_sha256, rpm_url: $edk2_rpm_url},
+              code: {path: $code_path, sha256: $code_sha256},
+              variable_store: {source_qcow2_sha256: $vars_source_sha256, raw_sha256: $vars_sha256},
+              enrolled_key_source_commit: $upstream_commit,
+              secure_boot_enabled: true,
+              pk_der_sha256: "c10c10a6309ea4544f04561edc3c12c22259e3d29ee30de70b65345b22b7cfd9",
+              kek_der_sha256: "ace51bc81ad18ac6d6bf86a65960f714e3a29c4074d1ab8ee890139f544588af",
+              db_der_sha256: "652a7d50464cf88bb0601fca90e603cded93083e6bdc9fab3cf17084dae1f524"
+            }' > fedora-output/firmware-provenance.json
+          echo "ATTESTOS_FEDORA_OVMF_CODE=$code" >> "$GITHUB_ENV"
+          echo "ATTESTOS_FEDORA_OVMF_VARS=$PWD/fedora-output/OVMF_VARS_CUSTOM.fd" \
+            >> "$GITHUB_ENV"
+
+      - name: Install sealed image through systemd-boot
+        run: |
+          set -euxo pipefail
+          bash scripts/build_fedora_sealed_disk.sh \
+            fedora-output/fedora-sealed.qcow2 \
+            fedora-output
+
+      - name: Confirm signed command-line tamper rejection
+        run: |
+          set -euo pipefail
+          qemu-img create \
+            -f qcow2 \
+            -F qcow2 \
+            -b "$PWD/fedora-output/fedora-sealed.qcow2" \
+            fedora-output/upstream-tamper.qcow2
+          bash scripts/tamper_fedora_sealed_uki.sh \
+            fedora-output/upstream-tamper.qcow2 \
+            fedora-output/static-inspection.json \
+            fedora-output/upstream-tamper
+          set +e
+          bash scripts/run_fedora_sealed_positive_control.sh \
+            fedora-output/upstream-tamper.qcow2 \
+            fedora-output/upstream-tamper/boot
+          rc=$?
+          set -e
+          [[ $rc -eq 80 ]]
+          jq '.firmware_rejected = true' \
+            fedora-output/upstream-tamper/tamper-preboot.json \
+            > fedora-output/upstream-tamper/tamper-admission.json
+          rm -f fedora-output/upstream-tamper.qcow2
+
+      - name: Boot immutable upstream UKI and collect evidence
+        run: |
+          set -euxo pipefail
+          bash scripts/run_fedora_sealed_positive_control.sh \
+            fedora-output/fedora-sealed.qcow2 \
+            fedora-output/upstream-boot
+
+      - name: Evaluate exact loaded UKI and PCR 11 joins
+        run: |
+          set -euxo pipefail
+          python3 scripts/validate_fedora_sealed_positive_control.py \
+            --static fedora-output/static-inspection.json \
+            --guest fedora-output/upstream-boot/guest-evidence.json \
+            --provenance fedora-output/provenance.json \
+            --tamper fedora-output/upstream-tamper/tamper-admission.json \
+            --output fedora-output/positive-control.json
+
+      - name: Upload bounded positive-control evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fedora-sealed-positive-control-${{ github.sha }}
+          path: |
+            fedora-output/source-manifest.json
+            fedora-output/source-inspection.json
+            fedora-output/source-signature.json
+            fedora-output/installer-manifest.json
+            fedora-output/installer-signature.json
+            fedora-output/source-prepare-root.conf
+            fedora-output/source-prepare-root.sha256
+            fedora-output/provenance.json
+            fedora-output/firmware-vars.json
+            fedora-output/firmware-provenance.json
+            fedora-output/probe-installation.json
+            fedora-output/static-inspection.json
+            fedora-output/upstream-tamper/tamper-preboot.json
+            fedora-output/upstream-tamper/tamper-admission.json
+            fedora-output/upstream-tamper/boot/serial.log
+            fedora-output/upstream-boot/guest-evidence.json
+            fedora-output/positive-control.json
+            fedora-output/disk.sha256
+            fedora-output/upstream-boot/serial.log
+            fedora-output/upstream-boot/console-driver.log
+            fedora-output/upstream-boot/screen-*.ppm
+            fedora-output/upstream-boot/debugfs.log
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 9
+
+      - name: Enforce positive-control stop rules
+        run: |
+          set -euo pipefail
+          python3 scripts/validate_fedora_sealed_positive_control.py \
+            --static fedora-output/static-inspection.json \
+            --guest fedora-output/upstream-boot/guest-evidence.json \
+            --provenance fedora-output/provenance.json \
+            --tamper fedora-output/upstream-tamper/tamper-admission.json \
+            --output fedora-output/positive-control.json \
+            --enforce

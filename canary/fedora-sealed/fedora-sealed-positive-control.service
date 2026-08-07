@@ -1,0 +1,15 @@
+[Unit]
+Description=Collect bounded Fedora sealed positive-control evidence
+After=local-fs.target dev-vdb.device
+Wants=dev-vdb.device
+ConditionPathExists=/dev/vdb
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/mkdir -p /mnt
+ExecStart=/usr/bin/mount -t ext4 -o rw /dev/vdb /mnt
+ExecStart=/usr/bin/python3 /etc/attestos-positive-control/fedora_sealed_guest_probe.py
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=multi-user.target
