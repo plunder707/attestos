@@ -1,0 +1,186 @@
+---
+name: Fedora sealed UKI positive control
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'canary/fedora-sealed/**'
+      - 'trust/fedora-sealed-*'
+      - 'scripts/build_fedora_sealed_disk.sh'
+      - 'scripts/drive_fedora_sealed_console.py'
+      - 'scripts/fedora_sealed_guest_probe.py'
+      - 'scripts/inspect_fedora_sealed_disk.py'
+      - 'scripts/run_fedora_sealed_positive_control.sh'
+      - 'scripts/validate_fedora_sealed_positive_control.py'
+      - 'tests/test_fedora_sealed_positive_control.py'
+      - 'FEDORA_SEALED_POSITIVE_CONTROL.md'
+      - '.github/workflows/fedora-sealed-uki-positive-control.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fedora-sealed-positive-control-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ATTESTOS_FEDORA_SOURCE_COMMIT: cbe45816bb166c9df97c0714014f3ea7bdffcdac
+  ATTESTOS_FEDORA_IMAGE_REFERENCE: quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d60c9ab5f847858f3b316465ae2138e3080f3102ed69b13ffe8cf8f09e98608c
+  ATTESTOS_FEDORA_OVMF_VARS_SHA256: 07029be230ad284b910e94e16dbd05f5b495f194dea90629bfdf94cb390b853b
+
+jobs:
+  positive-control:
+    name: systemd-boot / loaded UKI / PCR 11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Maximize disposable runner space
+        uses: ublue-os/remove-unwanted-software@cc0becac701cf642c8f0a6613bbdaf5dc36b259e # v9
+        with:
+          remove-codeql: true
+
+      - name: Install canary dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            btrfs-progs \
+            cryptsetup-bin \
+            curl \
+            dosfstools \
+            e2fsprogs \
+            jq \
+            ovmf \
+            parted \
+            podman \
+            python3-jsonschema \
+            python3-pytest \
+            qemu-system-x86 \
+            qemu-utils \
+            sbsigntool \
+            skopeo \
+            swtpm \
+            swtpm-tools \
+            systemd \
+            tpm2-tools \
+            util-linux
+
+      - name: Validate positive-control contracts
+        run: |
+          set -euxo pipefail
+          python3 -m pytest -q
+          bash -n scripts/build_fedora_sealed_disk.sh
+          bash -n scripts/run_fedora_sealed_positive_control.sh
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
+      - name: Resolve immutable source and verify provenance
+        run: |
+          set -euxo pipefail
+          mkdir -p fedora-output
+          expected_digest="${ATTESTOS_FEDORA_IMAGE_REFERENCE##*@}"
+          skopeo inspect --raw \
+            "docker://$ATTESTOS_FEDORA_IMAGE_REFERENCE" \
+            > fedora-output/source-manifest.json
+          computed_digest="sha256:$(sha256sum fedora-output/source-manifest.json | cut -d' ' -f1)"
+          [[ "$computed_digest" == "$expected_digest" ]]
+          [[ "$(sha256sum trust/fedora-sealed-cosign.pub | cut -d' ' -f1)" == \
+             454e4bc8d59d3c356d193a006d2dbf98a2cbdac6db7e3320da2c57590b6e3ba4 ]]
+          [[ "$(sha256sum trust/fedora-sealed-secureboot-db.pem | cut -d' ' -f1)" == \
+             c23207f1db85578cb0a5f56fd3ca7ca1082f7a85f924ac85ac1cb9da7e2c176a ]]
+          cosign verify \
+            --key trust/fedora-sealed-cosign.pub \
+            "$ATTESTOS_FEDORA_IMAGE_REFERENCE" \
+            > fedora-output/source-signature.json
+
+          jq -n \
+            --arg image_reference "$ATTESTOS_FEDORA_IMAGE_REFERENCE" \
+            --arg source_commit "$ATTESTOS_FEDORA_SOURCE_COMMIT" \
+            --arg manifest_sha256 "${computed_digest#sha256:}" \
+            '{
+              format: "attestos.fedora_sealed_provenance/v1",
+              image_reference: $image_reference,
+              upstream_source_commit: $source_commit,
+              manifest_sha256: $manifest_sha256,
+              platform: {os: "linux", architecture: "amd64"}
+            }' > fedora-output/provenance.json
+
+      - name: Fetch pinned Secure Boot variable store
+        run: |
+          set -euxo pipefail
+          source_url="https://raw.githubusercontent.com/travier/fedora-atomic-desktops-sealed/${ATTESTOS_FEDORA_SOURCE_COMMIT}/OVMF_VARS_CUSTOM.qcow2"
+          curl --fail --location --silent --show-error \
+            "$source_url" \
+            --output fedora-output/OVMF_VARS_CUSTOM.qcow2
+          echo "$ATTESTOS_FEDORA_OVMF_VARS_SHA256  fedora-output/OVMF_VARS_CUSTOM.qcow2" \
+            | sha256sum --check --strict
+          qemu-img convert \
+            -f qcow2 \
+            -O raw \
+            fedora-output/OVMF_VARS_CUSTOM.qcow2 \
+            fedora-output/OVMF_VARS_CUSTOM.fd
+          echo "ATTESTOS_FEDORA_OVMF_VARS=$PWD/fedora-output/OVMF_VARS_CUSTOM.fd" \
+            >> "$GITHUB_ENV"
+
+      - name: Install sealed image through systemd-boot
+        run: |
+          set -euxo pipefail
+          bash scripts/build_fedora_sealed_disk.sh \
+            fedora-output/fedora-sealed.qcow2 \
+            fedora-output
+
+      - name: Boot networkless positive control and collect evidence
+        run: |
+          set -euxo pipefail
+          bash scripts/run_fedora_sealed_positive_control.sh \
+            fedora-output/fedora-sealed.qcow2 \
+            fedora-output
+
+      - name: Evaluate exact loaded UKI and PCR 11 joins
+        run: |
+          set -euxo pipefail
+          python3 scripts/validate_fedora_sealed_positive_control.py \
+            --static fedora-output/static-inspection.json \
+            --guest fedora-output/guest-evidence.json \
+            --provenance fedora-output/provenance.json \
+            --output fedora-output/positive-control.json
+
+      - name: Upload bounded positive-control evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fedora-sealed-positive-control-${{ github.sha }}
+          path: |
+            fedora-output/source-manifest.json
+            fedora-output/source-signature.json
+            fedora-output/provenance.json
+            fedora-output/static-inspection.json
+            fedora-output/guest-evidence.json
+            fedora-output/positive-control.json
+            fedora-output/disk.sha256
+            fedora-output/serial.log
+            fedora-output/console-driver.log
+            fedora-output/debugfs.log
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 9
+
+      - name: Enforce positive-control stop rules
+        run: |
+          set -euo pipefail
+          python3 scripts/validate_fedora_sealed_positive_control.py \
+            --static fedora-output/static-inspection.json \
+            --guest fedora-output/guest-evidence.json \
+            --provenance fedora-output/provenance.json \
+            --output fedora-output/positive-control.json \
+            --enforce

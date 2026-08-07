@@ -44,6 +44,8 @@ build instructions are in [`BUILDING.md`](BUILDING.md). The next UKI
 engineering candidate and its independent admission criteria are recorded in
 [`UKI_BASE_DECISION.md`](UKI_BASE_DECISION.md).
 The milestone order and stop rules are tracked in [`ROADMAP.md`](ROADMAP.md).
+The separate loaded-UKI harness control is specified in
+[`FEDORA_SEALED_POSITIVE_CONTROL.md`](FEDORA_SEALED_POSITIVE_CONTROL.md).
 
 ---
 
