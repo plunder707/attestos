@@ -104,6 +104,7 @@ def inspect_candidate(uki: Path, certs: list[Path], root: Path, source_path: str
 
     return {
         "container_path": source_path,
+        "size_bytes": uki.stat().st_size,
         "sha256": sha256(uki),
         "signature_present": signature_list.returncode == 0,
         "signature_summary": (signature_list.stdout or signature_list.stderr)[-1000:],

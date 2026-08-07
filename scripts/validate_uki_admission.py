@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -25,12 +26,21 @@ def load_json(path: Path) -> dict:
 
 
 def normalize_digest(value: object) -> str | None:
-    if not isinstance(value, (str, int)):
+    if isinstance(value, bool):
         return None
-    text = str(value).lower()
+    if isinstance(value, int):
+        if value < 0:
+            return None
+        text = f"{value:x}"
+    elif isinstance(value, str):
+        text = value.lower()
+    else:
+        return None
     if text.startswith("0x"):
         text = text[2:]
-    return text.zfill(64) if len(text) <= 64 else None
+    if not text or len(text) > 64 or re.fullmatch(r"[0-9a-f]+", text) is None:
+        return None
+    return text.zfill(64)
 
 
 def replay_firmware_pcr7(guest: dict) -> dict:
@@ -77,18 +87,21 @@ def evaluate(receipt: dict, static: dict) -> dict:
     guest = receipt.get("guest", {})
     boot = guest.get("boot", {})
     pcrs = guest.get("pcr_values", {}).get("sha256", {})
-    boot_ukis = boot.get("uki_files", [])
+    guest_candidates = boot.get("uki_files", [])
     static_hashes = {
         item.get("sha256") for item in static.get("candidates", [])
         if isinstance(item, dict)
     }
-    boot_hashes = {
-        item.get("sha256") for item in boot_ukis if isinstance(item, dict)
+    guest_candidate_hashes = {
+        item.get("sha256") for item in guest_candidates if isinstance(item, dict)
     }
     loaded = [
-        item for item in boot_ukis
+        item for item in guest_candidates
         if isinstance(item, dict) and item.get("matches_loader_identifier") is True
     ]
+    loaded_hashes = {
+        item.get("sha256") for item in loaded if isinstance(item, dict)
+    }
     loaded_cmdline = loaded[0].get("embedded_cmdline", {}) if len(loaded) == 1 else {}
     loaded_hash = loaded[0].get("sha256") if len(loaded) == 1 else None
     static_matches = [
@@ -140,8 +153,11 @@ def evaluate(receipt: dict, static: dict) -> dict:
         "firmware_replay": firmware_replay,
         "loaded_uki_count": len(loaded),
         "matched_static_candidate_count": len(static_matches),
-        "boot_uki_hashes": sorted(value for value in boot_hashes if value),
-        "static_uki_hashes": sorted(value for value in static_hashes if value),
+        "guest_uki_candidate_hashes": sorted(
+            value for value in guest_candidate_hashes if value),
+        "loaded_uki_hashes": sorted(value for value in loaded_hashes if value),
+        "container_uki_candidate_hashes": sorted(
+            value for value in static_hashes if value),
         "manufacturer_trusted": False,
         "policy_trusted": False,
         "production_trusted": False,

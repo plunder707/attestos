@@ -48,6 +48,33 @@ The workflow uploads static inspection, boot receipt, serial log, and admission
 report even when the final admission gate fails. Negative results are durable
 evidence, not workflow noise.
 
+## Standard Bluefin LTS result
+
+Run
+[`31170696765`](https://github.com/plunder707/attestos/actions/runs/31170696765)
+built and booted the immutable standard Bluefin LTS candidate with Secure Boot
+enabled, then correctly stopped at the final admission gate. Firmware followed
+shim and GRUB into a separate kernel and initramfs. The guest exposed no
+`LoaderImageIdentifier` or systemd-stub variables, PCR 11 and PCR 15 remained
+zero, and neither the embedded nor runtime command line contained the attestos
+policy arguments. PCR 12 also remained zero, which is a valid baseline when no
+external command-line input is supplied.
+
+A `kernel-uki-virt` file existed in both the container and installed guest, but
+it was not the loaded image. Their hashes also differed across the image-build
+boundary. The admission report therefore distinguishes container candidates,
+guest filesystem candidates, and firmware-loaded UKIs; candidate presence is
+not boot evidence. Static inspection found a PE signature but did not validate
+it against a carried certificate, so the signature and tamper gates remained
+closed.
+
+The run's firmware log replay initially reported a mismatch because the checker
+converted `tpm2_eventlog`'s unquoted YAML hexadecimal integer to decimal text.
+Replaying the exact 35,024-byte artifact reproduces quoted PCR 7 after strict
+integer normalization. This checker repair requires a fresh sealed rerun; it
+does not change the base HOLD because the loaded-UKI and policy gates remain
+false.
+
 ## Isolation
 
 - disposable GitHub runner;

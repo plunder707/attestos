@@ -1,4 +1,5 @@
 import importlib.util
+import subprocess
 from pathlib import Path
 
 
@@ -8,6 +9,31 @@ SPEC = importlib.util.spec_from_file_location("uki_admission", SCRIPT)
 assert SPEC and SPEC.loader
 module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(module)
+
+
+def test_normalize_digest_accepts_tpm2_eventlog_yaml_integer():
+    digest = "186c5a18e20524ef9ede9f5781abdf84bbbc6f56dfeb8affe8272ee7f1088283"
+    assert module.normalize_digest(int(digest, 16)) == digest
+
+
+def test_normalize_digest_rejects_non_hex_and_boolean_values():
+    assert module.normalize_digest("not-a-digest") is None
+    assert module.normalize_digest(True) is None
+
+
+def test_replay_firmware_pcr7_accepts_tpm2_eventlog_yaml_integer(monkeypatch):
+    digest = "186c5a18e20524ef9ede9f5781abdf84bbbc6f56dfeb8affe8272ee7f1088283"
+    output = f"pcrs:\n  sha256:\n    7  : 0x{digest}\n"
+    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs:
+                        subprocess.CompletedProcess(args[0], 0, output, ""))
+    guest = {
+        "event_log_payloads": {"tcg_firmware": "AA=="},
+        "pcr_values": {"sha256": {"7": digest}},
+    }
+    result = module.replay_firmware_pcr7(guest)
+    assert result["matches_quote"] is True
+    assert result["replayed_pcr7"] == digest
+    assert result["reason"] == "ok"
 
 
 def fixtures():
@@ -117,3 +143,17 @@ def test_unloaded_signed_decoy_cannot_authorize_loaded_uki(monkeypatch):
     assert result["gates"]["loaded_uki_matches_one_static_candidate"] is True
     assert result["gates"]["loaded_uki_pe_signature_verified"] is False
     assert result["gates"]["loaded_uki_tamper_rejected"] is False
+
+
+def test_unloaded_uki_is_reported_as_candidate_not_loaded(monkeypatch):
+    receipt, static = fixtures()
+    candidate = receipt["guest"]["boot"]["uki_files"][0]
+    candidate["matches_loader_identifier"] = False
+    monkeypatch.setattr(module, "replay_firmware_pcr7", lambda _guest: {
+        "available": True, "matches_quote": True, "reason": "ok",
+    })
+    result = module.evaluate(receipt, static)
+    assert result["guest_uki_candidate_hashes"] == [candidate["sha256"]]
+    assert result["loaded_uki_hashes"] == []
+    assert result["loaded_uki_count"] == 0
+    assert "boot_uki_hashes" not in result

@@ -2,8 +2,8 @@
 
 Date: 2026-08-06
 
-Decision status: selected for the next UKI engineering canary; not selected as
-a production or gaming distribution base.
+Decision status: evaluated and held by the UKI engineering canary; not selected
+as a production or gaming distribution base.
 
 ## Selection
 
@@ -65,3 +65,19 @@ if a separately built and booted artifact proves:
 
 Until those checks pass, `policy_trusted=false` and the attestos base remains
 unchanged.
+
+## Measured decision
+
+Standard Bluefin LTS is not admitted. Run
+[`31170696765`](https://github.com/plunder707/attestos/actions/runs/31170696765)
+verified the signed OCI index, built an ext4 QCOW2, and booted it with Secure
+Boot enabled. It then observed shim and GRUB loading a separate kernel and
+initramfs rather than the packaged UKI. No systemd-stub variables were present,
+PCR 11 and PCR 15 were zero, and the approved policy arguments were absent from
+the embedded and runtime command lines.
+
+The `kernel-uki-virt` package therefore establishes only that a UKI candidate
+exists. It does not establish that firmware selects it. The container-stage and
+installed-guest candidate hashes also differed, so any future candidate must be
+inspected after disk construction and joined to the firmware-loaded identity,
+not inferred from the pre-install container alone.

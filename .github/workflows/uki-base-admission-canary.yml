@@ -154,7 +154,7 @@ jobs:
             --file Containerfile.boot-canary \
             .
 
-      - name: Inspect signed UKI and tamper negative
+      - name: Inspect UKI candidates and tamper negative
         run: |
           set -euxo pipefail
           mkdir -p uki-output

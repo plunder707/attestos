@@ -40,6 +40,13 @@ This repository is the image that produces the evidence.
 >
 > This source is available for review and reproducible emulation. No GHCR
 > image is published and it is not an installable trusted distribution.
+>
+> The separate standard Bluefin LTS experiment reached a stronger negative
+> result in [run 31170696765](https://github.com/plunder707/attestos/actions/runs/31170696765):
+> Secure Boot was enabled and a UKI candidate existed on disk, but firmware
+> booted shim/GRUB plus a separate kernel and initramfs. No UKI was identified
+> as loaded, PCRs 11 and 15 remained zero, and the policy command line was
+> absent. Standard Bluefin LTS is therefore held rather than selected.
 
 The completed Bazzite experiment is specified in
 [`BOOTED_IMAGE_CANARY.md`](BOOTED_IMAGE_CANARY.md). Reproduction and source
