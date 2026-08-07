@@ -1,3 +1,4 @@
+import importlib.machinery
 import importlib.util
 import json
 from pathlib import Path
@@ -7,12 +8,22 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "validate_booted_image_receipt.py"
+PROBE = ROOT / "system_files" / "usr" / "libexec" / "attestos-boot-evidence-canary"
 RUNNER = ROOT / "scripts" / "run_booted_image_canary.sh"
 UNIT = ROOT / "system_files" / "usr" / "lib" / "systemd" / "system" / "attestos-boot-evidence-canary.service"
 SPEC = importlib.util.spec_from_file_location("boot_receipt", SCRIPT)
 assert SPEC and SPEC.loader
 module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(module)
+
+
+def load_probe():
+    loader = importlib.machinery.SourceFileLoader("boot_probe", str(PROBE))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    assert spec and spec.loader
+    probe = importlib.util.module_from_spec(spec)
+    loader.exec_module(probe)
+    return probe
 
 
 def guest_receipt() -> dict:
@@ -108,3 +119,29 @@ def test_guest_probe_runs_after_provision_before_multi_user():
     assert "After=attestos-provision.service\n" in unit
     assert "Before=multi-user.target\n" in unit
     assert "After=attestos-provision.service multi-user.target" not in unit
+
+
+def test_agent_failure_prefers_structured_diagnostic(monkeypatch):
+    probe = load_probe()
+
+    class Failed:
+        returncode = 1
+        stdout = '{"error":"internal_error:TypeError:bad value"}'
+        stderr = "Traceback that would otherwise hide the exception"
+
+    monkeypatch.setattr(probe.subprocess, "run", lambda *args, **kwargs: Failed())
+    with pytest.raises(RuntimeError, match="internal_error:TypeError:bad value"):
+        probe.invoke_agent({"kind": "quote_challenge"})
+
+
+def test_agent_failure_uses_traceback_tail_when_stdout_is_empty(monkeypatch):
+    probe = load_probe()
+
+    class Failed:
+        returncode = 1
+        stdout = ""
+        stderr = "Traceback header\nTypeError: guest-only incompatibility"
+
+    monkeypatch.setattr(probe.subprocess, "run", lambda *args, **kwargs: Failed())
+    with pytest.raises(RuntimeError, match="TypeError: guest-only incompatibility"):
+        probe.invoke_agent({"kind": "quote_challenge"})

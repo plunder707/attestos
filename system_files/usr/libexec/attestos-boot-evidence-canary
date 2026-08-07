@@ -51,7 +51,11 @@ def invoke_agent(message: dict) -> dict:
         env={**os.environ, "LC_ALL": "C"},
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"attestos-agent failed ({proc.returncode}): {proc.stderr[:240]}")
+        structured = proc.stdout.strip()
+        traceback_tail = proc.stderr.strip()[-512:]
+        detail = structured or traceback_tail or "no diagnostic output"
+        raise RuntimeError(
+            f"attestos-agent failed ({proc.returncode}): {detail[:768]}")
     return json.loads(proc.stdout)
 
 
