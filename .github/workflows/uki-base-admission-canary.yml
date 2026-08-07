@@ -17,7 +17,6 @@ on:
       - 'scripts/validate_booted_image_receipt.py'
       - 'scripts/validate_uki_admission.py'
       - 'tests/**'
-      - 'trust/bluefin-lts-cosign.pub'
       - 'UKI_ADMISSION_CANARY.md'
       - '.github/workflows/uki-base-admission-canary.yml'
 
@@ -31,6 +30,7 @@ concurrency:
 env:
   ATTESTOS_BASE_IMAGE: ghcr.io/projectbluefin/bluefin:lts
   ATTESTOS_BUILDER_IMAGE: quay.io/centos-bootc/bootc-image-builder@sha256:2b52843ea2bfda73b0a08d97e76b734393b1d3a804681b9fabb26723bd3a2f0b
+  ATTESTOS_BLUEFIN_SIGNER_IDENTITY: https://github.com/projectbluefin/bluefin-lts/.github/workflows/reusable-build-image.yml@refs/heads/lts
 
 jobs:
   uki-admission:
@@ -74,14 +74,63 @@ jobs:
         id: base
         run: |
           set -euo pipefail
-          digest=$(skopeo inspect --override-arch amd64 --format '{{.Digest}}' \
+
+          repository="${ATTESTOS_BASE_IMAGE%:*}"
+          index_digest=$(skopeo inspect --format '{{.Digest}}' \
             "docker://$ATTESTOS_BASE_IMAGE")
-          [[ "$digest" == sha256:* ]]
-          reference="${ATTESTOS_BASE_IMAGE%@*}@$digest"
+          [[ "$index_digest" == sha256:* ]]
+          index_reference="${repository}@${index_digest}"
+
+          skopeo inspect --raw "docker://${index_reference}" > canary-base-index.json
+          computed_index_digest="sha256:$(sha256sum canary-base-index.json | cut -d' ' -f1)"
+          [[ "$computed_index_digest" == "$index_digest" ]]
+          jq -e '
+            .mediaType == "application/vnd.oci.image.index.v1+json"
+            or .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
+          ' canary-base-index.json >/dev/null
+
           cosign verify \
-            --key trust/bluefin-lts-cosign.pub \
-            "$reference" > canary-base-signature.json
+            --certificate-identity "$ATTESTOS_BLUEFIN_SIGNER_IDENTITY" \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            "$index_reference" > canary-base-signature.json
+
+          amd64_digest=$(jq -er '
+            [
+              .manifests[]
+              | select(
+                  .platform.os == "linux"
+                  and .platform.architecture == "amd64"
+                  and ((.platform.variant // "") == "")
+                )
+            ]
+            | if length == 1 then .[0].digest
+              else error("expected exactly one linux/amd64 child manifest")
+              end
+          ' canary-base-index.json)
+          [[ "$amd64_digest" == sha256:* ]]
+          reference="${repository}@${amd64_digest}"
+          skopeo inspect --raw "docker://${reference}" > canary-base-amd64-manifest.json
+          computed_amd64_digest="sha256:$(sha256sum canary-base-amd64-manifest.json | cut -d' ' -f1)"
+          [[ "$computed_amd64_digest" == "$amd64_digest" ]]
+
+          jq -n \
+            --arg source_tag "$ATTESTOS_BASE_IMAGE" \
+            --arg signed_index_reference "$index_reference" \
+            --arg signer_identity "$ATTESTOS_BLUEFIN_SIGNER_IDENTITY" \
+            --arg oidc_issuer 'https://token.actions.githubusercontent.com' \
+            --arg amd64_child_reference "$reference" \
+            '{
+              format: "attestos.oci_base_provenance/v1",
+              source_tag: $source_tag,
+              signed_index_reference: $signed_index_reference,
+              signer_identity: $signer_identity,
+              oidc_issuer: $oidc_issuer,
+              selected_platform: {os: "linux", architecture: "amd64"},
+              amd64_child_reference: $amd64_child_reference
+            }' > canary-base-provenance.json
+
           echo "reference=$reference" >> "$GITHUB_OUTPUT"
+          echo "index_reference=$index_reference" >> "$GITHUB_OUTPUT"
           echo "ATTESTOS_BASE_REFERENCE=$reference" >> "$GITHUB_ENV"
 
       - name: Build candidate and canary derivative
@@ -156,6 +205,9 @@ jobs:
           name: uki-base-admission-${{ github.sha }}
           path: |
             canary-base-signature.json
+            canary-base-index.json
+            canary-base-amd64-manifest.json
+            canary-base-provenance.json
             uki-output/static-inspection.json
             uki-output/receipt.json
             uki-output/admission.json

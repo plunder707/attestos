@@ -6,8 +6,11 @@ anti-cheat authority.
 ## Frozen candidate
 
 The candidate is `ghcr.io/projectbluefin/bluefin:lts`, resolved to an immutable
-digest at run time and verified with the public key vendored from the
-`projectbluefin/bluefin-lts` source repository.
+multi-architecture index digest at run time. The workflow verifies that index
+with the exact GitHub Actions OIDC identity currently recorded on the upstream
+signature, then selects the sole Linux/amd64 child digest from that verified
+index. Both immutable references are preserved in the audit artifact. A signed
+index cannot authorize a child that is not a member of that index.
 
 This is not a base-selection decision. It is the first executable test of the
 claim that the CentOS bootc lineage provides a usable signed UKI path.
@@ -48,3 +51,7 @@ evidence, not workflow noise.
 - no host or physical TPM;
 - no image or package publication; and
 - `contents: read` workflow permission only.
+
+The OCI signature establishes upstream image provenance. It does not establish
+the PE/UKI signature chain or boot-policy trust; those remain independent
+admission gates.

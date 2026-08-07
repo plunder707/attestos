@@ -30,14 +30,17 @@ Primary source references:
 - [CentOS Stream kernel UKI package](https://gitlab.com/redhat/centos-stream/rpms/kernel/-/blob/c10s/kernel.spec)
 
 The former draft reference `ghcr.io/ublue-os/bluefin-lts:stable` is not the
-published image location. The workflow must resolve the `projectbluefin`
-reference to an immutable architecture-specific digest before building.
+published image location. The workflow resolves the `projectbluefin` tag to a
+signed immutable multi-architecture index, verifies its exact GitHub Actions
+OIDC identity, and then binds the build to the sole Linux/amd64 child digest in
+that verified index.
 
 Bluefin's current documentation distinguishes image signing from boot-chain
-admission: the LTS OCI stream is key-signed, while ordinary LTS does not claim
-the same Secure Boot support as its HWE path. The canary therefore verifies
-the OCI signature, PE signature, booted Secure Boot state, and systemd-stub
-evidence as separate gates.
+admission: the LTS OCI index is signed keylessly through GitHub OIDC, while
+ordinary LTS does not claim the same Secure Boot support as its HWE path. The
+canary therefore verifies the OCI signature, index-to-child membership, PE
+signature, booted Secure Boot state, and systemd-stub evidence as separate
+gates.
 
 ## Why Bazzite is held
 

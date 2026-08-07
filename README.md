@@ -148,7 +148,7 @@ Containerfile            base image and the single RUN that calls build.sh
 build_files/build.sh     the attestation layer
 system_files/            agent, provisioning script, systemd units
 image-template.env       image name and registry organisation
-.github/workflows/       build, sign with cosign, push to GHCR
+.github/workflows/       build-only and isolated evidence canaries
 Justfile                 local build and test targets
 ```
 
