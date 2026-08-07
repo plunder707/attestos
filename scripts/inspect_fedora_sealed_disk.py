@@ -32,8 +32,13 @@ def sha256(path: Path) -> str:
 
 
 def dump_cmdline(uki: Path, destination: Path) -> bytes:
-    run("objcopy", "--dump-section", f".cmdline={destination}", str(uki))
-    return destination.read_bytes().rstrip(b"\x00")
+    scratch = destination.with_name(destination.name + ".objcopy-input.efi")
+    shutil.copy2(uki, scratch)
+    try:
+        run("objcopy", "--dump-section", f".cmdline={destination}", str(scratch))
+        return destination.read_bytes().rstrip(b"\x00")
+    finally:
+        scratch.unlink(missing_ok=True)
 
 
 def inspect(

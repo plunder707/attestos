@@ -15,7 +15,7 @@ work=$(mktemp -d -p /tmp attestos-fedora-tamper-work.XXXXXX)
 nbd=""
 mkdir -p "$output"
 
-for command in jq objcopy python3 qemu-img qemu-nbd; do
+for command in jq python3 qemu-img qemu-nbd; do
     command -v "$command" >/dev/null || {
         echo "missing required command: $command" >&2
         exit 1
@@ -57,54 +57,23 @@ expected_sha256=$(jq -r '.uki.sha256' "$static_receipt")
 original_sha256=$(sudo sha256sum "$uki" | cut -d' ' -f1)
 [[ "$original_sha256" == "$expected_sha256" ]]
 
-sudo dd if="$uki" of="$work/tampered.efi" bs=4M status=none conv=fsync
-sudo chown "$(id -u):$(id -g)" "$work/tampered.efi"
-objcopy --dump-section .cmdline="$work/cmdline" "$work/tampered.efi"
-original_cmdline_sha256=$(python3 - "$work/cmdline" <<'PY'
-import hashlib
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-cmdline = path.read_bytes().rstrip(b"\0")
-if not cmdline:
-    raise SystemExit("installed UKI has an empty embedded command line")
-print(hashlib.sha256(cmdline).hexdigest())
-path.write_bytes(cmdline + b" attestos_tamper=1\0")
-PY
-)
-tampered_cmdline_sha256=$(python3 - "$work/cmdline" <<'PY'
-import hashlib
-import sys
-from pathlib import Path
-
-print(hashlib.sha256(Path(sys.argv[1]).read_bytes().rstrip(b"\0")).hexdigest())
-PY
-)
-[[ "$tampered_cmdline_sha256" != "$original_cmdline_sha256" ]]
-objcopy --update-section .cmdline="$work/cmdline" "$work/tampered.efi"
-tampered_sha256=$(sha256sum "$work/tampered.efi" | cut -d' ' -f1)
-[[ "$tampered_sha256" != "$original_sha256" ]]
+sudo dd if="$uki" of="$work/original.efi" bs=4M status=none conv=fsync
+sudo chown "$(id -u):$(id -g)" "$work/original.efi"
+python3 scripts/mutate_pe_cmdline.py \
+    --input "$work/original.efi" \
+    --output "$work/tampered.efi" \
+    --receipt "$work/mutation.json"
+[[ "$(jq -r '.original_uki_sha256' "$work/mutation.json")" == "$original_sha256" ]]
+[[ "$(jq -r '.certificate_table_preserved' "$work/mutation.json")" == true ]]
 sudo install -m 0644 "$work/tampered.efi" "$uki"
 sync
 
-jq -n \
-    --arg original_sha256 "$original_sha256" \
-    --arg tampered_sha256 "$tampered_sha256" \
-    --arg original_cmdline_sha256 "$original_cmdline_sha256" \
-    --arg tampered_cmdline_sha256 "$tampered_cmdline_sha256" \
-    '{
-      format: "attestos.fedora_sealed_tamper/v1",
-      mutation: "embedded_cmdline_without_resigning",
-      original_uki_sha256: $original_sha256,
-      tampered_uki_sha256: $tampered_sha256,
-      original_cmdline_sha256: $original_cmdline_sha256,
-      tampered_cmdline_sha256: $tampered_cmdline_sha256,
-      firmware_rejected: false,
-      manufacturer_trusted: false,
-      policy_trusted: false,
-      production_trusted: false
-    }' > "$output/tamper-preboot.json"
+jq \
+    '.layout_format = .format |
+     .format = "attestos.fedora_sealed_tamper/v1" |
+     .mutation = "embedded_cmdline_bytes_without_resigning" |
+     .firmware_rejected = false' \
+    "$work/mutation.json" > "$output/tamper-preboot.json"
 
 sudo umount "$mount_root"
 sudo qemu-nbd --disconnect "$nbd"

@@ -5,8 +5,8 @@ Status: development-only harness experiment. It grants no attestation trust.
 ## Question
 
 Can the existing admission harness distinguish a real systemd-boot UKI boot
-from the Bazzite and standard Bluefin shim/GRUB negative controls, while also
-keeping upstream signature admission separate from harness compatibility?
+from the Bazzite and standard Bluefin shim/GRUB negative controls without
+rewriting or substituting the upstream signed boot artifact?
 
 The canary passes only if one immutable Fedora sealed image produces all of
 these joined observations:
@@ -15,18 +15,16 @@ these joined observations:
 2. the version-matched installer OCI manifest verifies against that key;
 3. the installed ESP contains systemd-boot and exactly one UKI;
 4. the original UKI verifies against the pinned upstream development Secure
-   Boot key but its frozen RSA-4096 signature is rejected by the matched OVMF
-   firmware;
-5. changing its embedded `.cmdline` causes Secure Boot firmware to reject a
+   Boot key before any section inspection;
+5. changing only its embedded `.cmdline` bytes, while preserving its PE
+   certificate table and file size, causes Secure Boot firmware to reject a
    throwaway copy;
-6. a run-local RSA-2048 compatibility signature preserves the exact embedded
-   command line and is enrolled only in a copied variable store;
-7. the compatibility-signed guest reports both `systemd-boot` and
+6. the unchanged upstream-signed guest reports both `systemd-boot` and
    `systemd-stub` EFI variables;
-8. `StubImageIdentifier` names the same compatibility-signed UKI inspected
+7. `StubImageIdentifier` names the same upstream-signed UKI inspected
    before boot;
-9. the loaded file's SHA-256 equals the preboot SHA-256; and
-10. systemd-stub declares PCR 11 and the guest reads a nonzero SHA-256 PCR 11.
+8. the loaded file's SHA-256 equals the preboot SHA-256; and
+9. systemd-stub declares PCR 11 and the guest reads a nonzero SHA-256 PCR 11.
 
 File presence, package presence, a nonzero PCR by itself, or a matching hash
 without the loaded-path identity join cannot pass.
@@ -74,22 +72,16 @@ verify all three PK/KEK/db DER fingerprints before boot. The RPM, firmware code,
 source variable store, and converted raw-store hashes are preserved in the
 receipt.
 
-The matched upstream pair still rejects the original UKI with
-`EFI_SECURITY_VIOLATION` even though `sbverify` accepts its PE signature and the
-exact upstream db certificate is enrolled. The certificate uses RSA-4096. This
-is retained as a bounded negative admission receipt, not tuned away. A second
-arm adds a fresh RSA-2048 test certificate to a copy of the same variable
-store, strictly removes the original terminal PE certificate table, adds one
-compatibility Authenticode signature with the pinned Fedora image's own
-`systemd-sbsign`, and proves that the embedded command line is byte-identical
-across stripping and signing. This is necessary because `systemd-sbsign`
-appends signatures by design, while the matched firmware rejects the original
-signature. Ubuntu's older `sbverify` cannot parse this large UKI reliably, so
-the compatibility signature is not labeled statically verified: the canary
-requires firmware to reject a tampered overlay and admit the exact untampered
-hash instead. Its private key is deleted
-before artifacts are collected. That arm is a harness compatibility control;
-it cannot establish that the original upstream signature is firmware-admissible.
+Earlier runs appeared to show the matched firmware rejecting the original UKI.
+That result is invalidated by a harness mutation: GNU `objcopy --dump-section`
+rewrites its input when no output PE is supplied. The static inspector verified
+the signature, then truncated 7,344 bytes containing the certificate table
+while extracting `.cmdline`; firmware correctly rejected the damaged file.
+Every dump-only inspection now operates on a disposable copy. The negative arm
+mutates `.cmdline` bytes in place with a PE-aware parser and proves that the
+certificate table and total file size remain unchanged. No run-local signing
+key, replacement UKI, or modified firmware trust store exists in the active
+canary.
 
 This historical candidate replaces the August 3 image after three fail-closed
 runs proved that image internally inconsistent for installation. Its UKI
@@ -134,8 +126,8 @@ The unit and script hashes are preserved in a separate instrumentation receipt.
 ## Non-authority
 
 Even a green result proves only that the harness can observe a positive UKI
-case. The run-local key is public test material with no manufacturer or policy
-authority. The upstream image uses development keys, masks several systemd TPM
+case. The upstream key is public development material with no manufacturer or
+policy authority. The upstream image masks several systemd TPM
 measurement services, and does not embed the attestos policy. The validator
 requires `manufacturer_trusted=false`, `policy_trusted=false`, and
 `production_trusted=false` in every input and output.

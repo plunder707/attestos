@@ -29,6 +29,12 @@ console = load(
 stripper = load(
     "pe_certificate_stripper", ROOT / "scripts/strip_pe_certificate_table.py"
 )
+inspector = load(
+    "fedora_disk_inspector", ROOT / "scripts/inspect_fedora_sealed_disk.py"
+)
+cmdline_mutator = load(
+    "pe_cmdline_mutator", ROOT / "scripts/mutate_pe_cmdline.py"
+)
 
 
 IMAGE = (
@@ -125,11 +131,16 @@ def compatibility_evidence() -> dict:
 def tamper_evidence() -> dict:
     return {
         "format": "attestos.fedora_sealed_tamper/v1",
-        "mutation": "embedded_cmdline_without_resigning",
+        "layout_format": "attestos.pe_cmdline_mutation/v1",
+        "mutation": "embedded_cmdline_bytes_without_resigning",
         "original_uki_sha256": UKI,
         "tampered_uki_sha256": "f" * 64,
         "original_cmdline_sha256": "b" * 64,
         "tampered_cmdline_sha256": "e" * 64,
+        "certificate_table_sha256_before": "9" * 64,
+        "certificate_table_sha256_after": "9" * 64,
+        "certificate_table_preserved": True,
+        "file_size_unchanged": True,
         "firmware_rejected": True,
         "manufacturer_trusted": False,
         "policy_trusted": False,
@@ -168,6 +179,30 @@ def synthetic_signed_pe(extra: bytes = b"") -> bytes:
     struct.pack_into("<II", data, certificate_directory, certificate_offset, 16)
     data.extend(struct.pack("<IHH8s", 16, 0x0200, 0x0002, b"signature"))
     data.extend(extra)
+    return bytes(data)
+
+
+def synthetic_signed_pe_with_cmdline() -> bytes:
+    pe_offset = 0x80
+    optional_offset = pe_offset + 4 + 20
+    optional_end = optional_offset + 0xF0
+    certificate_directory = optional_offset + 112 + 4 * 8
+    cmdline_offset = 0x200
+    cmdline_size = 0x40
+    certificate_offset = cmdline_offset + cmdline_size
+    data = bytearray(certificate_offset)
+    struct.pack_into("<I", data, 0x3C, pe_offset)
+    data[pe_offset:pe_offset + 4] = b"PE\0\0"
+    struct.pack_into("<H", data, pe_offset + 4 + 2, 1)
+    struct.pack_into("<H", data, pe_offset + 4 + 16, 0xF0)
+    struct.pack_into("<H", data, optional_offset, 0x20B)
+    struct.pack_into("<I", data, optional_offset + 108, 16)
+    struct.pack_into("<II", data, certificate_directory, certificate_offset, 16)
+    section = optional_end
+    data[section:section + 8] = b".cmdline"
+    struct.pack_into("<II", data, section + 16, cmdline_size, cmdline_offset)
+    data[cmdline_offset:cmdline_offset + len(b"quiet\0")] = b"quiet\0"
+    data.extend(struct.pack("<IHH8s", 16, 0x0200, 0x0002, b"signature"))
     return bytes(data)
 
 
@@ -215,6 +250,33 @@ def test_certificate_strip_reports_possible_omitted_certificate_alignment():
         stripper.strip_certificate_table(bytes(source))
 
 
+def test_cmdline_mutation_preserves_certificate_bytes_and_file_size():
+    source = synthetic_signed_pe_with_cmdline()
+    mutated, details = cmdline_mutator.mutate_cmdline(source)
+    assert len(mutated) == len(source)
+    assert mutated[:0x200] == source[:0x200]
+    assert mutated[0x240:] == source[0x240:]
+    assert details["certificate_table_preserved"] is True
+    assert details["file_size_unchanged"] is True
+    assert details["original_cmdline_sha256"] != details["tampered_cmdline_sha256"]
+
+
+def test_cmdline_dump_uses_disposable_objcopy_input(tmp_path, monkeypatch):
+    source = tmp_path / "source.efi"
+    destination = tmp_path / "cmdline"
+    source.write_bytes(b"signed-source")
+
+    def fake_run(*args, **_kwargs):
+        scratch = Path(args[-1])
+        assert scratch != source
+        scratch.write_bytes(b"objcopy-rewrite")
+        destination.write_bytes(b"quiet\0")
+
+    monkeypatch.setattr(inspector, "run", fake_run)
+    assert inspector.dump_cmdline(source, destination) == b"quiet"
+    assert source.read_bytes() == b"signed-source"
+
+
 def test_positive_control_requires_every_join():
     result = validator.evaluate(
         static_evidence(), guest_evidence(), provenance(),
@@ -224,6 +286,28 @@ def test_positive_control_requires_every_join():
     assert all(result["gates"].values())
     assert result["authority"] == "harness_positive_control_only"
     assert result["policy_trusted"] is False
+
+
+def test_direct_upstream_positive_control_requires_original_signed_uki():
+    static = static_evidence()
+    static["uki"]["signature_verified"] = True
+    result = validator.evaluate_direct(
+        static, guest_evidence(), provenance(), tamper_evidence()
+    )
+    assert result["passed"] is True
+    assert all(result["gates"].values())
+    assert result["mode"] == "immutable_upstream_uki"
+    assert "run-local compatibility signing key" not in result["non_authority"]
+
+
+def test_direct_upstream_rejects_tamper_receipt_that_rewrites_certificate():
+    static = static_evidence()
+    static["uki"]["signature_verified"] = True
+    tamper = tamper_evidence()
+    tamper["certificate_table_preserved"] = False
+    result = validator.evaluate_direct(static, guest_evidence(), provenance(), tamper)
+    assert result["passed"] is False
+    assert result["gates"]["tampered_cmdline_firmware_rejected"] is False
 
 
 def test_zero_pcr11_fails_closed():
@@ -449,7 +533,7 @@ def test_historical_control_binds_source_and_installer_to_one_digest():
     assert "source-inspection.json" in workflow
 
 
-def test_upstream_pair_is_frozen_and_compatibility_arm_is_non_authoritative():
+def test_upstream_pair_is_frozen_without_a_run_local_signing_authority():
     workflow = (
         ROOT / ".github/workflows/fedora-sealed-uki-positive-control.yml"
     ).read_text()
@@ -463,16 +547,15 @@ def test_upstream_pair_is_frozen_and_compatibility_arm_is_non_authoritative():
     assert 'fedora-output/OVMF_VARS_CUSTOM.qcow2' in workflow
     assert "--set-pk" not in workflow
     assert "--add-kek" not in workflow
-    assert '--add-db "$owner_guid" fedora-output/canary-signing.pem' in workflow
+    assert "--add-db" not in workflow
     assert "--extract-certs" in workflow
     assert "[[ $rc -eq 80 ]]" in workflow
-    assert 'fedora-output/upstream-admission.qcow2' in workflow
+    assert 'fedora-output/upstream-tamper.qcow2' in workflow
     assert '-b "$PWD/fedora-output/fedora-sealed.qcow2"' in workflow
-    assert 'rm -f fedora-output/upstream-admission.qcow2' in workflow
-    assert "upstream_db_rsa_bits: 4096" in workflow
-    assert "rm -f fedora-output/canary-signing.key" in workflow
-    assert "fedora-output/canary-signing.key" not in workflow.split(
-        "path: |", 1
+    assert 'rm -f fedora-output/upstream-tamper.qcow2' in workflow
+    assert "canary-signing.key" not in workflow
+    assert "prepare_fedora_sealed_compat_control.sh" not in workflow.split(
+        "- name: Install sealed image through systemd-boot", 1
     )[1]
     assert "ATTESTOS_FEDORA_OVMF_CODE=$code" in workflow
     assert "ATTESTOS_FEDORA_OVMF_CODE" in runner
@@ -537,14 +620,13 @@ def test_tamper_negative_changes_exact_signed_uki_in_throwaway_overlay():
         ROOT / ".github/workflows/fedora-sealed-uki-positive-control.yml"
     ).read_text()
     assert '[[ "$original_sha256" == "$expected_sha256" ]]' in tamper
-    assert "attestos_tamper=1" in tamper
-    assert '.read_bytes().rstrip(b"\\0")' in tamper
-    assert '[[ "$tampered_cmdline_sha256" != "$original_cmdline_sha256" ]]' in tamper
-    assert '[[ "$tampered_sha256" != "$original_sha256" ]]' in tamper
-    assert "fedora-output/compat-tamper.qcow2" in workflow
+    assert "scripts/mutate_pe_cmdline.py" in tamper
+    assert "certificate_table_preserved" in tamper
+    assert "embedded_cmdline_bytes_without_resigning" in tamper
+    assert "fedora-output/upstream-tamper.qcow2" in workflow
     assert "[[ $rc -eq 80 ]]" in workflow
     assert ".firmware_rejected = true" in workflow
-    assert "--tamper fedora-output/compat-tamper/tamper-admission.json" in workflow
+    assert "--tamper fedora-output/upstream-tamper/tamper-admission.json" in workflow
 
 
 @pytest.mark.parametrize(

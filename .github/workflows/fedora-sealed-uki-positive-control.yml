@@ -13,6 +13,7 @@ on:
       - 'scripts/drive_fedora_sealed_console.py'
       - 'scripts/fedora_sealed_guest_probe.py'
       - 'scripts/inspect_fedora_sealed_disk.py'
+      - 'scripts/mutate_pe_cmdline.py'
       - 'scripts/run_fedora_sealed_positive_control.sh'
       - 'scripts/strip_pe_certificate_table.py'
       - 'scripts/tamper_fedora_sealed_uki.sh'
@@ -244,129 +245,45 @@ jobs:
             fedora-output/fedora-sealed.qcow2 \
             fedora-output
 
-      - name: Confirm frozen upstream UKI admission rejection
+      - name: Confirm signed command-line tamper rejection
         run: |
           set -euo pipefail
           qemu-img create \
             -f qcow2 \
             -F qcow2 \
             -b "$PWD/fedora-output/fedora-sealed.qcow2" \
-            fedora-output/upstream-admission.qcow2
-          set +e
-          bash scripts/run_fedora_sealed_positive_control.sh \
-            fedora-output/upstream-admission.qcow2 \
-            fedora-output/upstream-admission
-          rc=$?
-          set -e
-          [[ $rc -eq 80 ]]
-          rm -f fedora-output/upstream-admission.qcow2
-          jq -n \
-            --argjson exit_status "$rc" \
-            '{
-              format: "attestos.fedora_sealed_upstream_admission/v1",
-              admitted: false,
-              exit_status: $exit_status,
-              failure: "firmware_security_violation",
-              upstream_db_rsa_bits: 4096,
-              manufacturer_trusted: false,
-              policy_trusted: false,
-              production_trusted: false
-            }' > fedora-output/upstream-admission.json
-
-      - name: Prepare run-local RSA-2048 compatibility control
-        run: |
-          set -euxo pipefail
-          owner_guid=$(cat fedora-output/secureboot-guid)
-          openssl req \
-            -new \
-            -x509 \
-            -newkey rsa:2048 \
-            -nodes \
-            -sha256 \
-            -days 1 \
-            -subj '/CN=attestos ephemeral CI compatibility key/' \
-            -keyout fedora-output/canary-signing.key \
-            -out fedora-output/canary-signing.pem
-          openssl x509 \
-            -in fedora-output/canary-signing.pem \
-            -outform DER \
-            -out fedora-output/canary-signing.der
-
-          virt-fw-vars \
-            --input fedora-output/OVMF_VARS_CUSTOM.fd \
-            --output fedora-output/OVMF_VARS_COMPAT.fd \
-            --add-db "$owner_guid" fedora-output/canary-signing.pem \
-            --sb
-          virt-fw-vars \
-            --input fedora-output/OVMF_VARS_COMPAT.fd \
-            --output-json fedora-output/compat-firmware-vars.json
-          mkdir fedora-output/compat-certs
-          (
-            cd fedora-output/compat-certs
-            virt-fw-vars --input ../OVMF_VARS_COMPAT.fd --extract-certs
-          )
-          expected=$(sha256sum fedora-output/canary-signing.der | cut -d' ' -f1)
-          found=false
-          for cert in fedora-output/compat-certs/*.pem; do
-            actual=$(openssl x509 -in "$cert" -outform DER | sha256sum | cut -d' ' -f1)
-            [[ "$actual" == "$expected" ]] && found=true
-          done
-          [[ "$found" == true ]]
-
-          mv fedora-output/static-inspection.json \
-            fedora-output/upstream-static-inspection.json
-          bash scripts/prepare_fedora_sealed_compat_control.sh \
-            fedora-output/fedora-sealed.qcow2 \
-            fedora-output \
-            trust/fedora-sealed-secureboot-db.pem \
-            fedora-output/canary-signing.key \
-            fedora-output/canary-signing.pem
-          rm -f fedora-output/canary-signing.key
-          test ! -e fedora-output/canary-signing.key
-          echo "ATTESTOS_FEDORA_OVMF_VARS=$PWD/fedora-output/OVMF_VARS_COMPAT.fd" \
-            >> "$GITHUB_ENV"
-
-      - name: Confirm compatibility signature tamper rejection
-        run: |
-          set -euo pipefail
-          qemu-img create \
-            -f qcow2 \
-            -F qcow2 \
-            -b "$PWD/fedora-output/fedora-sealed.qcow2" \
-            fedora-output/compat-tamper.qcow2
+            fedora-output/upstream-tamper.qcow2
           bash scripts/tamper_fedora_sealed_uki.sh \
-            fedora-output/compat-tamper.qcow2 \
+            fedora-output/upstream-tamper.qcow2 \
             fedora-output/static-inspection.json \
-            fedora-output/compat-tamper
+            fedora-output/upstream-tamper
           set +e
           bash scripts/run_fedora_sealed_positive_control.sh \
-            fedora-output/compat-tamper.qcow2 \
-            fedora-output/compat-tamper/boot
+            fedora-output/upstream-tamper.qcow2 \
+            fedora-output/upstream-tamper/boot
           rc=$?
           set -e
           [[ $rc -eq 80 ]]
           jq '.firmware_rejected = true' \
-            fedora-output/compat-tamper/tamper-preboot.json \
-            > fedora-output/compat-tamper/tamper-admission.json
-          rm -f fedora-output/compat-tamper.qcow2
+            fedora-output/upstream-tamper/tamper-preboot.json \
+            > fedora-output/upstream-tamper/tamper-admission.json
+          rm -f fedora-output/upstream-tamper.qcow2
 
-      - name: Boot networkless compatibility control and collect evidence
+      - name: Boot immutable upstream UKI and collect evidence
         run: |
           set -euxo pipefail
           bash scripts/run_fedora_sealed_positive_control.sh \
             fedora-output/fedora-sealed.qcow2 \
-            fedora-output/compat-boot
+            fedora-output/upstream-boot
 
       - name: Evaluate exact loaded UKI and PCR 11 joins
         run: |
           set -euxo pipefail
           python3 scripts/validate_fedora_sealed_positive_control.py \
             --static fedora-output/static-inspection.json \
-            --guest fedora-output/compat-boot/guest-evidence.json \
+            --guest fedora-output/upstream-boot/guest-evidence.json \
             --provenance fedora-output/provenance.json \
-            --compatibility fedora-output/compat-resign.json \
-            --certificate-strip fedora-output/certificate-strip.json \
-            --tamper fedora-output/compat-tamper/tamper-admission.json \
+            --tamper fedora-output/upstream-tamper/tamper-admission.json \
             --output fedora-output/positive-control.json
 
       - name: Upload bounded positive-control evidence
@@ -386,24 +303,16 @@ jobs:
             fedora-output/firmware-vars.json
             fedora-output/firmware-provenance.json
             fedora-output/probe-installation.json
-            fedora-output/upstream-static-inspection.json
-            fedora-output/upstream-admission.json
-            fedora-output/upstream-admission/serial.log
-            fedora-output/compat-resign.json
-            fedora-output/certificate-strip.json
-            fedora-output/compat-firmware-vars.json
-            fedora-output/compat-tamper/tamper-preboot.json
-            fedora-output/compat-tamper/tamper-admission.json
-            fedora-output/compat-tamper/boot/serial.log
-            fedora-output/canary-signing.pem
-            fedora-output/canary-signing.der
             fedora-output/static-inspection.json
-            fedora-output/compat-boot/guest-evidence.json
+            fedora-output/upstream-tamper/tamper-preboot.json
+            fedora-output/upstream-tamper/tamper-admission.json
+            fedora-output/upstream-tamper/boot/serial.log
+            fedora-output/upstream-boot/guest-evidence.json
             fedora-output/positive-control.json
             fedora-output/disk.sha256
-            fedora-output/compat-boot/serial.log
-            fedora-output/compat-boot/console-driver.log
-            fedora-output/compat-boot/debugfs.log
+            fedora-output/upstream-boot/serial.log
+            fedora-output/upstream-boot/console-driver.log
+            fedora-output/upstream-boot/debugfs.log
           if-no-files-found: warn
           retention-days: 14
           compression-level: 9
@@ -413,10 +322,8 @@ jobs:
           set -euo pipefail
           python3 scripts/validate_fedora_sealed_positive_control.py \
             --static fedora-output/static-inspection.json \
-            --guest fedora-output/compat-boot/guest-evidence.json \
+            --guest fedora-output/upstream-boot/guest-evidence.json \
             --provenance fedora-output/provenance.json \
-            --compatibility fedora-output/compat-resign.json \
-            --certificate-strip fedora-output/certificate-strip.json \
-            --tamper fedora-output/compat-tamper/tamper-admission.json \
+            --tamper fedora-output/upstream-tamper/tamper-admission.json \
             --output fedora-output/positive-control.json \
             --enforce

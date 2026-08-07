@@ -59,6 +59,17 @@ mapfile -t ukis < <(sudo find "$mount_root/EFI/Linux" -type f -name '*.efi' -pri
 installed_uki=${ukis[0]}
 work=$(mktemp -d -p /tmp attestos-fedora-sign.XXXXXX)
 trap 'rm -rf "$work"; cleanup' EXIT
+
+dump_cmdline() {
+    local source=$1
+    local destination=$2
+    local label=$3
+    local scratch="$work/${label}.objcopy-input.efi"
+    cp --reflink=auto "$source" "$scratch"
+    objcopy --dump-section .cmdline="$destination" "$scratch"
+    rm -f "$scratch"
+}
+
 expected_sha256=$(jq -r '.uki.sha256' "$output/upstream-static-inspection.json")
 expected_cert_sha256=$(jq -r '.uki.certificate_sha256' "$output/upstream-static-inspection.json")
 upstream_cert_sha256=$(sha256sum "$upstream_cert" | cut -d' ' -f1)
@@ -87,15 +98,16 @@ printf 'compat_immutable_source size=%s sha256=%s installed_sha256=%s\n' \
     "$source_size" "$source_sha256" "$installed_sha256"
 sbverify --cert "$upstream_cert" "$work/original.efi"
 
-sudo objcopy --dump-section .cmdline="$work/installed.cmdline" "$installed_uki"
-sudo chown "$(id -u):$(id -g)" "$work/installed.cmdline"
-objcopy --dump-section .cmdline="$work/original.cmdline" "$work/original.efi"
+sudo dd if="$installed_uki" of="$work/installed-read.efi" bs=4M status=none
+sudo chown "$(id -u):$(id -g)" "$work/installed-read.efi"
+dump_cmdline "$work/installed-read.efi" "$work/installed.cmdline" installed
+dump_cmdline "$work/original.efi" "$work/original.cmdline" original
 cmp "$work/installed.cmdline" "$work/original.cmdline"
 python3 scripts/strip_pe_certificate_table.py \
     --input "$work/original.efi" \
     --output "$work/unsigned.efi" \
     --receipt "$output/certificate-strip.json"
-objcopy --dump-section .cmdline="$work/unsigned.cmdline" "$work/unsigned.efi"
+dump_cmdline "$work/unsigned.efi" "$work/unsigned.cmdline" unsigned
 cmp "$work/original.cmdline" "$work/unsigned.cmdline"
 install -m 0600 "$canary_key" "$work/canary-signing.key"
 install -m 0644 "$canary_cert" "$work/canary-signing.pem"
@@ -118,7 +130,7 @@ sudo podman run \
     '
 sudo chown "$(id -u):$(id -g)" "$work/signed.efi"
 rm -f "$work/canary-signing.key"
-objcopy --dump-section .cmdline="$work/signed.cmdline" "$work/signed.efi"
+dump_cmdline "$work/signed.efi" "$work/signed.cmdline" signed
 cmp "$work/original.cmdline" "$work/signed.cmdline"
 [[ "$(sha256sum "$work/original.efi" | cut -d' ' -f1)" != \
    "$(sha256sum "$work/signed.efi" | cut -d' ' -f1)" ]]

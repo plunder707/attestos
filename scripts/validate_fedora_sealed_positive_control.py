@@ -44,6 +44,102 @@ def enforce_non_authority(*artifacts: dict) -> None:
                 raise EvidenceError(f"{key} must be explicitly false")
 
 
+def evaluate_direct(
+    static: dict,
+    guest: dict,
+    provenance: dict,
+    tamper: dict,
+) -> dict:
+    enforce_non_authority(static, guest, tamper)
+    static_uki = static.get("uki", {})
+    guest_uki = guest.get("loaded_uki", {})
+    pcr11 = digest(guest.get("pcr_values", {}).get("sha256", {}).get("11"))
+    source_reference = static.get("source_reference")
+    installer_reference = static.get("installer_reference")
+    gates = {
+        "immutable_source_join": (
+            isinstance(source_reference, str) and
+            source_reference == provenance.get("image_reference") and
+            "@sha256:" in source_reference
+        ),
+        "immutable_installer_join": (
+            isinstance(installer_reference, str) and
+            installer_reference == provenance.get("installer_reference") and
+            "@sha256:" in installer_reference
+        ),
+        "exactly_one_static_uki": static.get("esp", {}).get("uki_count") == 1,
+        "upstream_signature_verified_before_boot": (
+            static_uki.get("signature_verified") is True and
+            digest(static_uki.get("certificate_sha256")) is not None
+        ),
+        "tampered_cmdline_firmware_rejected": (
+            tamper.get("format") == "attestos.fedora_sealed_tamper/v1" and
+            tamper.get("layout_format") == "attestos.pe_cmdline_mutation/v1" and
+            tamper.get("mutation") ==
+            "embedded_cmdline_bytes_without_resigning" and
+            tamper.get("certificate_table_preserved") is True and
+            tamper.get("file_size_unchanged") is True and
+            digest(tamper.get("certificate_table_sha256_before")) is not None and
+            tamper.get("certificate_table_sha256_before") ==
+            tamper.get("certificate_table_sha256_after") and
+            tamper.get("firmware_rejected") is True and
+            tamper.get("original_uki_sha256") == static_uki.get("sha256") and
+            digest(tamper.get("tampered_uki_sha256")) is not None and
+            tamper.get("tampered_uki_sha256") !=
+            tamper.get("original_uki_sha256") and
+            tamper.get("original_cmdline_sha256") ==
+            static_uki.get("embedded_cmdline_sha256") and
+            digest(tamper.get("tampered_cmdline_sha256")) is not None and
+            tamper.get("tampered_cmdline_sha256") !=
+            tamper.get("original_cmdline_sha256")
+        ),
+        "guest_probe_success": guest.get("success") is True,
+        "secure_boot_enabled": guest.get("secure_boot_enabled") is True,
+        "systemd_boot_observed": (
+            isinstance(guest.get("loader_info"), str) and
+            guest["loader_info"].startswith("systemd-boot ")
+        ),
+        "systemd_stub_observed": (
+            isinstance(guest.get("stub_info"), str) and
+            guest["stub_info"].startswith("systemd-stub ")
+        ),
+        "stub_declares_pcr11": guest.get("stub_pcr_kernel_image") == "11",
+        "loaded_uki_path_matches_static": (
+            normalize_uefi_path(guest.get("stub_image_identifier")) ==
+            normalize_uefi_path(static_uki.get("uefi_path")) ==
+            normalize_uefi_path(guest_uki.get("uefi_path"))
+        ),
+        "loaded_uki_hash_matches_static": (
+            digest(guest_uki.get("sha256")) is not None and
+            guest_uki.get("sha256") == static_uki.get("sha256")
+        ),
+        "pcr11_nonzero": pcr11 not in (None, ZERO_SHA256),
+    }
+    passed = all(gates.values())
+    return {
+        "format": FORMAT,
+        "mode": "immutable_upstream_uki",
+        "passed": passed,
+        "gates": gates,
+        "failed_gates": sorted(name for name, value in gates.items() if not value),
+        "image_reference": source_reference,
+        "installer_reference": installer_reference,
+        "loaded_uki_sha256": guest_uki.get("sha256"),
+        "pcr11_sha256": pcr11,
+        "manufacturer_trusted": False,
+        "policy_trusted": False,
+        "production_trusted": False,
+        "authority": "harness_positive_control_only",
+        "non_authority": [
+            "software TPM",
+            "upstream development signing key",
+            "no attestos agent or policy command line",
+            "no manufacturer admission",
+            "no production deployment",
+        ],
+    }
+
+
 def evaluate(
     static: dict,
     guest: dict,
@@ -163,7 +259,14 @@ def evaluate(
         ),
         "tampered_cmdline_firmware_rejected": (
             tamper.get("format") == "attestos.fedora_sealed_tamper/v1" and
-            tamper.get("mutation") == "embedded_cmdline_without_resigning" and
+            tamper.get("layout_format") == "attestos.pe_cmdline_mutation/v1" and
+            tamper.get("mutation") ==
+            "embedded_cmdline_bytes_without_resigning" and
+            tamper.get("certificate_table_preserved") is True and
+            tamper.get("file_size_unchanged") is True and
+            digest(tamper.get("certificate_table_sha256_before")) is not None and
+            tamper.get("certificate_table_sha256_before") ==
+            tamper.get("certificate_table_sha256_after") and
             tamper.get("firmware_rejected") is True and
             digest(tamper.get("original_uki_sha256")) is not None and
             tamper.get("original_uki_sha256") == static_uki.get("sha256") and
@@ -231,20 +334,31 @@ def main() -> int:
     parser.add_argument("--static", type=Path, required=True)
     parser.add_argument("--guest", type=Path, required=True)
     parser.add_argument("--provenance", type=Path, required=True)
-    parser.add_argument("--compatibility", type=Path, required=True)
-    parser.add_argument("--certificate-strip", type=Path, required=True)
+    parser.add_argument("--compatibility", type=Path)
+    parser.add_argument("--certificate-strip", type=Path)
     parser.add_argument("--tamper", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--enforce", action="store_true")
     args = parser.parse_args()
-    result = evaluate(
-        load_object(args.static),
-        load_object(args.guest),
-        load_object(args.provenance),
-        load_object(args.compatibility),
-        load_object(args.certificate_strip),
-        load_object(args.tamper),
-    )
+    static = load_object(args.static)
+    guest = load_object(args.guest)
+    provenance = load_object(args.provenance)
+    tamper = load_object(args.tamper)
+    if bool(args.compatibility) != bool(args.certificate_strip):
+        raise EvidenceError(
+            "compatibility and certificate-strip must be supplied together"
+        )
+    if args.compatibility:
+        result = evaluate(
+            static,
+            guest,
+            provenance,
+            load_object(args.compatibility),
+            load_object(args.certificate_strip),
+            tamper,
+        )
+    else:
+        result = evaluate_direct(static, guest, provenance, tamper)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     print(json.dumps({
