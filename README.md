@@ -58,11 +58,33 @@ changed, and attests perfectly clean while loading whatever they want.
 A Unified Kernel Image binds kernel, initrd, and command line into one signed
 PE binary measured into PCR 11, so changing any part moves the measurement.
 
-**Whether that UKI can be produced in this build layer is unverified.** It may
-need to happen at install time through `kernel-install` on the target rather
-than inside the container. Confirming this against the actual Bazzite base is
-the next task, and until it is confirmed the `cmdline` file this image ships
-is only a declaration of intent.
+**Bazzite does not do UKI, and this is now confirmed rather than suspected.**
+Its Containerfile actively excludes the UKI kernel packages:
+
+```
+dnf5 -y config-manager setopt "*fedora*".exclude="mesa-* kernel-core-* \
+    kernel-modules-* kernel-uki-virt-* steam"
+```
+
+`systemd-ukify` appears nowhere in the repository. So the `cmdline` file this
+image ships is currently a declaration of intent and nothing more: without a
+UKI there is nothing sealing it, a user can edit it at the bootloader, and
+PCR 11 does not measure what the design assumes it measures.
+
+Fixing this is not a line in `build.sh`. It means installing `systemd-ukify`,
+generating and signing a UKI, and redirecting the boot path away from the
+kernel handling Bazzite already does, against a base that excludes the UKI
+packages on purpose. That is a change to how the image boots, not a layer on
+top of it.
+
+Three ways forward, none of them chosen yet:
+
+1. Do the UKI work on Bazzite anyway and accept the divergence from the base.
+2. Move to a base that already supports UKI. The bootc ecosystem does deal
+   with `ukify`; Bazzite specifically does not.
+3. Find a measurement that does not depend on a UKI. Harder, because the
+   whole point of the UKI is that it seals a command line the user would
+   otherwise be able to edit.
 
 ## The Secure Boot problem, unsolved
 
@@ -112,8 +134,7 @@ their work.
 ## What still has to be answered
 
 - Does the image build at all. Not yet confirmed.
-- Can a signed UKI be produced in the build layer, or must it happen at
-  install time.
+- Which of the three UKI routes to take, given Bazzite excludes UKI kernels.
 - Is PCR 15 populated the way the design assumes on a bootc root.
 - Does MOK enrollment produce a PCR 7 value stable enough to write a policy
   against.
