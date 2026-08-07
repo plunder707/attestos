@@ -201,7 +201,7 @@ def deployment_claim() -> dict:
             "image_digest": digest,
             "ostree_checksum": checksum,
         }
-    except (AgentError, json.JSONDecodeError, AttributeError):
+    except (AgentError, OSError, json.JSONDecodeError, AttributeError):
         return unavailable
 
 

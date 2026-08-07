@@ -146,6 +146,19 @@ def test_quote_refuses_caller_supplied_channel_binding(agent):
         agent.quote(message)
 
 
+def test_deployment_claim_is_unavailable_when_bootc_is_absent(agent, monkeypatch):
+    def missing_bootc(*args, **kwargs):
+        raise FileNotFoundError("bootc")
+
+    monkeypatch.setattr(agent, "run", missing_bootc)
+    assert agent.deployment_claim() == {
+        "source": "unavailable",
+        "image_reference": None,
+        "image_digest": None,
+        "ostree_checksum": None,
+    }
+
+
 def test_provisioner_repairs_state_and_uses_distinct_ek_certificate():
     script = (ROOT / "system_files/usr/bin/attestos-provision").read_text()
     unit = (ROOT / "system_files/usr/lib/systemd/system/attestos-provision.service").read_text()
