@@ -1,7 +1,7 @@
 # attestos
 
-**SOURCE MECHANICS PREVIEW. THREE REQUIRED PCRS ARE ZERO ON THE CURRENT
-BAZZITE CANARY; THIS DOES NOT YET ATTEST THE OPERATING SYSTEM.**
+**SOURCE MECHANICS PREVIEW. THE CURRENT BAZZITE CANARY BOOTED NO UKI AND
+LEFT PCRS 11 AND 15 AT ZERO; THIS DOES NOT ATTEST THE OPERATING SYSTEM.**
 
 Bazzite with a TPM boot attestation layer on top, so an anti-cheat vendor can
 verify what the machine actually booted instead of checking whether the distro
@@ -30,10 +30,13 @@ This repository is the image that produces the evidence.
 >
 > The booted result also confirms the Bazzite policy blocker: no UKI file or
 > systemd-stub signal was present, the intended lockdown arguments were absent,
-> and PCRs 11, 12, and 15 remained zero. Secure Boot key enrollment, UKI-backed
-> command-line measurement, hardware provenance, event-log replay, transport
-> binding, and boot-policy admission remain unsolved. Neither green run
-> establishes a functioning production attestation system.
+> and PCRs 11 and 15 remained zero. PCR 12 was also zero, but that is not an
+> independent failure: the embedded UKI command line belongs to PCR 11, while
+> PCR 12 records external command-line inputs and may correctly remain zero
+> when none are supplied. Secure Boot key enrollment, UKI-backed command-line
+> measurement, hardware provenance, event-log replay, transport binding, and
+> boot-policy admission remain unsolved. Neither green run establishes a
+> functioning production attestation system.
 >
 > This source is available for review and reproducible emulation. No GHCR
 > image is published and it is not an installable trusted distribution.

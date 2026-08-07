@@ -7,7 +7,15 @@ cp -avf "/ctx/system_files"/. /
 ### Packages the agent needs at runtime.
 # tpm2-tools provides tpm2_quote, tpm2_pcrread, tpm2_createak and tpm2_nvread.
 # tpm2-tss is the stack underneath them.
-dnf5 install -y binutils tpm2-tools tpm2-tss
+if command -v dnf5 >/dev/null 2>&1; then
+    package_manager=dnf5
+elif command -v dnf >/dev/null 2>&1; then
+    package_manager=dnf
+else
+    echo "attestos: base image has neither dnf5 nor dnf" >&2
+    exit 1
+fi
+"${package_manager}" install -y binutils tpm2-tools tpm2-tss
 
 ### Vendor kernel command line under test.
 #

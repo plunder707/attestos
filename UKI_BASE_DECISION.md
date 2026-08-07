@@ -35,12 +35,14 @@ signed immutable multi-architecture index, verifies its exact GitHub Actions
 OIDC identity, and then binds the build to the sole Linux/amd64 child digest in
 that verified index.
 
-Bluefin's current documentation distinguishes image signing from boot-chain
-admission: the LTS OCI index is signed keylessly through GitHub OIDC, while
-ordinary LTS does not claim the same Secure Boot support as its HWE path. The
-canary therefore verifies the OCI signature, index-to-child membership, PE
-signature, booted Secure Boot state, and systemd-stub evidence as separate
-gates.
+Bluefin's published supply-chain page describes LTS as key-based. The exact
+live `bluefin:lts` index resolved by the canary instead carried a Fulcio
+certificate for the Bluefin LTS GitHub workflow and passed exact-identity OIDC
+verification; the vendored repository key did not verify that object. This is
+an observed documentation/artifact mismatch, so the canary binds to the exact
+live index signature and preserves the signer identity rather than forcing the
+documented mode. OCI provenance, index-to-child membership, PE signature,
+booted Secure Boot state, and systemd-stub evidence remain separate gates.
 
 ## Why Bazzite is held
 

@@ -26,7 +26,10 @@ Evidence: run `31157890393`, receipt SHA-256
 `ad5ef12592cb5f4d1dfa8f0da88148931d48f0e6018924b2de4c766e1523ddaf`.
 
 Hold: Bazzite produced no UKI signal, no sealed lockdown command line, no
-systemd TPM event log, and zero-valued PCRs 11, 12, and 15.
+systemd TPM event log, and zero-valued PCRs 11 and 15. PCR 12 was also zero,
+which is a valid baseline when no external command-line inputs are supplied;
+it remains mandatory in the signed quote selection but is not independently a
+nonzero admission gate.
 
 ## 2. UKI-capable base admission - next
 

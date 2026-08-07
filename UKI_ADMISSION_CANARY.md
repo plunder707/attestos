@@ -12,6 +12,12 @@ signature, then selects the sole Linux/amd64 child digest from that verified
 index. Both immutable references are preserved in the audit artifact. A signed
 index cannot authorize a child that is not a member of that index.
 
+Bluefin's public documentation currently describes LTS signing as key-based,
+but the resolved live index carried a GitHub OIDC certificate and did not
+verify with the repository public key. The workflow follows the signed object
+it actually resolves and pins the certificate identity exactly. A future mode
+change fails closed and requires a reviewed contract update.
+
 This is not a base-selection decision. It is the first executable test of the
 claim that the CentOS bootc lineage provides a usable signed UKI path.
 
