@@ -10,13 +10,15 @@ This repository is the image that produces the evidence.
 
 ---
 
-> ## STATUS: BUILDS ARE NOT YET VERIFIED. NOTHING HAS BOOTED.
+> ## STATUS: CONTAINER BUILD VERIFIED. NOTHING HAS BOOTED.
 >
-> The Containerfile in this repo has not completed a successful build, the
-> resulting image has never been booted, and no quote has ever been produced
-> by the agent it installs. Secure Boot key enrollment is unsolved (see
-> below), so even a successful build would not attest the way the design
-> assumes.
+> GitHub Actions run
+> [31143048491](https://github.com/plunder707/attestos/actions/runs/31143048491)
+> built and rechunked commit `14e3a21` successfully against the Bazzite base.
+> The resulting image has never been booted, and no quote has ever been
+> produced by the agent it installs. Secure Boot key enrollment and UKI-backed
+> command-line measurement remain unsolved (see below), so a successful
+> container build does not establish a functioning attestation system.
 >
 > Treat this as a work in progress, not a distribution.
 
@@ -133,15 +135,19 @@ their work.
 
 ## What still has to be answered
 
-- Does the image build at all. Not yet confirmed.
+- Does the image build at all. Confirmed for commit `14e3a21` by GitHub Actions
+  run `31143048491`; the build emitted two non-fatal DNF-state lint warnings.
+- How the running agent obtains a verified deployed-image identity. The current
+  build writes `unknown` because an OCI image cannot embed its own final digest
+  while it is being constructed.
 - Which of the three UKI routes to take, given Bazzite excludes UKI kernels.
 - Is PCR 15 populated the way the design assumes on a bootc root.
 - Does MOK enrollment produce a PCR 7 value stable enough to write a policy
   against.
 - Would a vendor accept a MOK-enrolled key hierarchy at all.
 
-The test environment for the first four is QEMU with OVMF and swtpm, which
-needs no additional hardware. The fifth needs an email.
+The runtime measurement questions require QEMU with OVMF and swtpm, which
+needs no additional hardware. Vendor acceptance requires a vendor conversation.
 
 ## Licence
 

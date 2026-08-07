@@ -3,8 +3,9 @@
 This pull request exists only to exercise the inherited Universal Blue
 container build on GitHub Actions.
 
-The canary is triggered by pull-request updates to `build-test`; it is never
-started through the publishing-capable manual workflow path.
+The first canary was manually dispatched at the `build-test` ref. Publication
+is gated on the default branch, so the registry login, push, Cosign install,
+and signing steps were all skipped.
 
 Passing this canary means only that:
 
@@ -14,4 +15,21 @@ Passing this canary means only that:
 
 It does not establish that the image boots, produces a valid TPM quote, seals
 its kernel command line in a UKI, validates an AK/EK trust chain, or is ready to
-publish. Push, schedule, and package-publishing triggers remain disabled.
+publish. Automatic push and schedule triggers remain disabled; this run did
+not enter the package-publishing path.
+
+## First result
+
+- Result: pass
+- Run: https://github.com/plunder707/attestos/actions/runs/31143048491
+- Commit: `14e3a21f4c6bcbc438a591cc6f487049de49389b`
+- Duration: 15m46s
+- Verified: `just check`, container assembly, `bootc container lint`, and
+  rpm-ostree rechunking
+- Lint: 11 checks passed, 1 skipped, 2 non-fatal DNF-state warnings
+- Published artifacts: none; all registry and signing steps skipped
+
+The build also demonstrated that the baked `/usr/lib/attestos/image-digest`
+value is `unknown`. Deployed-image identity must be obtained and verified at
+runtime or bound by an external manifest; this canary does not solve that
+protocol requirement.
