@@ -151,6 +151,7 @@ def test_provisioner_repairs_state_and_uses_distinct_ek_certificate():
     unit = (ROOT / "system_files/usr/lib/systemd/system/attestos-provision.service").read_text()
     assert "EK_HANDLE=0x81010001" in script
     assert "AK_HANDLE=0x81010002" in script
+    assert 'tpm2_flushcontext "$work/ak.ctx"' in script
     assert '"$STATE/ek.crt"' in script
     assert "ak.crt" not in script
     assert "ConditionPathExists=!/var/lib/attestos/ak.pem" not in unit
