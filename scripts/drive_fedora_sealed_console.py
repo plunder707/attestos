@@ -43,6 +43,14 @@ class QMP:
             {"command-line": f"sendkey {key}"},
         )
 
+    def type_text(self, value: str) -> None:
+        if not value or not value.isascii() or not value.isalnum():
+            raise ValueError("console input must be non-empty ASCII alphanumeric text")
+        for character in value.lower():
+            self.sendkey(character)
+            time.sleep(0.025)
+        self.sendkey("ret")
+
     def status(self) -> str:
         return str(self.execute("query-status")["return"]["status"])
 
@@ -63,25 +71,30 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--qmp", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--luks-passphrase-file", type=Path, required=True)
     parser.add_argument("--drive-seconds", type=int, default=960)
-    parser.add_argument("--input-interval", type=int, default=30)
+    parser.add_argument("--input-start", type=int, default=120)
+    parser.add_argument("--input-interval", type=int, default=60)
     parser.add_argument("--screenshot-interval", type=int, default=120)
     args = parser.parse_args()
 
     wait_for_socket(args.qmp)
     qmp = QMP(args.qmp)
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    luks_passphrase = args.luks_passphrase_file.read_text(encoding="ascii").strip()
+    if not luks_passphrase or not luks_passphrase.isascii() or not luks_passphrase.isalnum():
+        raise ValueError("LUKS passphrase contract must be ASCII alphanumeric text")
     started = time.monotonic()
-    next_input = started + args.input_interval
+    next_input = started + args.input_start
     next_screenshot = started + args.screenshot_interval
     deadline = started + args.drive_seconds
     input_attempt = 0
     screenshot_attempt = 0
 
-    # The development root uses an empty LUKS passphrase. Under TCG the prompt
-    # can appear several minutes after firmware starts the 247 MiB UKI, so keep
-    # sending only Return across the bounded boot window. The installed probe is
-    # a systemd unit; typing shell commands on an assumed tty would be a false
+    # Under TCG the LUKS prompt appears about two minutes after firmware starts
+    # the 247 MiB UKI. Disk construction and console input share one explicit,
+    # intentionally public canary passphrase contract. The installed probe is a
+    # systemd unit; typing shell commands on an assumed tty would be a false
     # execution signal.
     while time.monotonic() < deadline:
         now = time.monotonic()
@@ -89,10 +102,10 @@ def main() -> int:
         elapsed = int(time.monotonic() - started)
         try:
             if time.monotonic() >= next_input:
-                qmp.sendkey("ret")
+                qmp.type_text(luks_passphrase)
                 input_attempt += 1
                 print(
-                    f"console_return_attempt={input_attempt} "
+                    f"luks_unlock_attempt={input_attempt} "
                     f"elapsed_seconds={elapsed} qemu_status={qmp.status()}",
                     flush=True,
                 )

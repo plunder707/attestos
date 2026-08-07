@@ -13,8 +13,17 @@ source_reference=${ATTESTOS_FEDORA_IMAGE_REFERENCE:?missing immutable image refe
 installer_reference=${ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE:?missing immutable installer reference}
 mapper="attestos-fedora-${GITHUB_RUN_ID:-local}-$$"
 mount_root=$(mktemp -d -p /tmp attestos-fedora-root.XXXXXX)
+luks_key=$(mktemp -p /tmp attestos-fedora-luks.XXXXXX)
 nbd=""
 mkdir -p "$(dirname "$disk")" "$output"
+
+IFS= read -r luks_passphrase < canary/fedora-sealed/public-luks-passphrase.txt
+[[ "$luks_passphrase" =~ ^[a-z0-9]+$ ]] || {
+    echo "disposable canary LUKS passphrase must be lowercase alphanumeric" >&2
+    exit 1
+}
+printf '%s' "$luks_passphrase" > "$luks_key"
+chmod 0600 "$luks_key"
 
 for command in cryptsetup objcopy podman qemu-img qemu-nbd sbverify systemd-repart; do
     command -v "$command" >/dev/null || {
@@ -29,6 +38,7 @@ cleanup() {
     mountpoint -q "$mount_root" && sudo umount "$mount_root"
     [[ -e "/dev/mapper/$mapper" ]] && sudo cryptsetup close "$mapper"
     [[ -n "$nbd" ]] && sudo qemu-nbd --disconnect "$nbd" >/dev/null 2>&1
+    rm -f "$luks_key"
     rm -rf "$mount_root"
 }
 trap cleanup EXIT
@@ -49,6 +59,7 @@ sudo qemu-nbd --connect="$nbd" --format=qcow2 "$disk"
 sudo systemd-repart \
     --empty=force \
     --definitions=canary/fedora-sealed/repart.d \
+    --key-file="$luks_key" \
     --dry-run=no \
     --discard=no \
     "$nbd"
@@ -62,9 +73,9 @@ root="${nbd}p2"
     exit 1
 }
 
-# The upstream development partition contract intentionally uses an empty
-# passphrase. QMP sends Return during boot for the same bounded test-only path.
-printf '\n' | sudo cryptsetup open "$root" "$mapper"
+# The public passphrase is isolation plumbing for this disposable canary, not
+# a security control. The boot driver reads the same tracked contract.
+sudo cryptsetup open --key-file="$luks_key" "$root" "$mapper"
 sudo mount "/dev/mapper/$mapper" "$mount_root"
 sudo mkdir -p "$mount_root/boot"
 sudo mount "$esp" "$mount_root/boot"

@@ -82,14 +82,15 @@ qemu_pid=$!
 python3 scripts/drive_fedora_sealed_console.py \
     --qmp "$qmp_socket" \
     --output-dir "$output" \
+    --luks-passphrase-file canary/fedora-sealed/public-luks-passphrase.txt \
     > "$output/console-driver.log" 2>&1 &
 driver_pid=$!
 
 while kill -0 "$qemu_pid" >/dev/null 2>&1; do
     sleep 10
-    printf 'guest_progress serial_bytes=%s return_attempts=%s screenshots=%s\n' \
+    printf 'guest_progress serial_bytes=%s unlock_attempts=%s screenshots=%s\n' \
         "$(stat -c %s "$serial" 2>/dev/null || echo 0)" \
-        "$(grep -c console_return_attempt "$output/console-driver.log" 2>/dev/null || true)" \
+        "$(grep -c luks_unlock_attempt "$output/console-driver.log" 2>/dev/null || true)" \
         "$(find "$output" -maxdepth 1 -name 'screen-*.ppm' -printf . 2>/dev/null | wc -c)"
     if grep -aEq 'Error loading EFI binary .*: Access denied|failed to start .*: Access Denied' "$serial"; then
         echo "Secure Boot firmware rejected the installed UKI" >&2
