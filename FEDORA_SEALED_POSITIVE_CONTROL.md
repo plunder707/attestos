@@ -26,11 +26,12 @@ without the loaded-path identity join cannot pass.
 ## Frozen Inputs
 
 - Upstream source commit:
-  `cbe45816bb166c9df97c0714014f3ea7bdffcdac`
+  `a5daa80297a062e2ffa8f018264de3594842fac4`
+- Successful upstream build run:
+  `24482575655`
 - Fedora 44 Silverblue sealed image:
-  `quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d60c9ab5f847858f3b316465ae2138e3080f3102ed69b13ffe8cf8f09e98608c`
-- Fedora 44 tools image used to compute the sealed UKI's composefs digest:
-  `quay.io/fedora-atomic-desktops-sealed/tools@sha256:927be1bd8673369c940305341764bdbb140c3a39d8546fd3891cb460affbcdc6`
+  `quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d0e34c45cb33adbeee3ada65b33addbb30297eb938bdb7af35c67b63b7028eb7`
+- Installer image: the same immutable Silverblue sealed image and digest above.
 - Upstream OVMF variable store SHA-256:
   `07029be230ad284b910e94e16dbd05f5b495f194dea90629bfdf94cb390b853b`
 - Vendored Cosign public key SHA-256:
@@ -38,20 +39,26 @@ without the loaded-path identity join cannot pass.
 - Vendored Secure Boot DB certificate SHA-256:
   `c23207f1db85578cb0a5f56fd3ca7ca1082f7a85f924ac85ac1cb9da7e2c176a`
 
-The upstream QCOW2 publication workflow has not produced this versioned disk:
-its August 3 run stopped during `bcvk to-disk` before the ORAS push. This
-repository therefore installs the pinned container into a fresh 20 GiB QCOW2
-using the upstream partition and `bootc install to-filesystem` contract.
+The pinned image was created at `2026-04-15T23:00:51.271335521Z` inside the
+successful upstream run above. The registry tag history, image creation time,
+run source commit, OVMF variable-store digest, Secure Boot certificate, and
+Cosign key form the frozen provenance packet. The workflow verifies the image
+manifest and signature again before installation.
 
-The August 3 upstream build computed the UKI digest with the separately built
-tools image above (`bootc` build `202607302110.g73b4639e8`). The final image
-contains Fedora `bootc` 1.16.6, which computes a different composefs digest and
-correctly refuses that UKI. The canary therefore runs the install with the
-exact signed tools image that created the digest. Both image references are
-immutable, independently verified, and joined in the receipt; no digest check
-is disabled. The tools image is deliberately minimal, so the installer receives
-only `ostree/prepare-root.conf` extracted from the verified source image. Its
-hash is retained with the canary evidence.
+This historical candidate replaces the August 3 image after three fail-closed
+runs proved that image internally inconsistent for installation. Its UKI
+contained composefs digest `6bd4...f996b43`, while both its own bootc and the
+exact tools image used during its build computed storage-ingest digest
+`1df3...f839de`. Matching the bootc version was therefore tested and disproved
+as a sufficient repair. This is the upstream directory-walk versus
+storage-ingest defect tracked in `bootc-dev/bootc#2194` and related format work
+in `bootc-dev/bootc#2334`; no digest check is bypassed here.
+
+The April candidate predates that regression window and uses the same immutable
+image for both source and installer. The installer still receives only
+`ostree/prepare-root.conf` extracted from that verified source, and its hash is
+retained with the evidence. If the signed UKI and storage digest disagree, the
+install must fail closed again.
 
 ## Isolation
 

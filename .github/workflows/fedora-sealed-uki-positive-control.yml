@@ -27,9 +27,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ATTESTOS_FEDORA_SOURCE_COMMIT: cbe45816bb166c9df97c0714014f3ea7bdffcdac
-  ATTESTOS_FEDORA_IMAGE_REFERENCE: quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d60c9ab5f847858f3b316465ae2138e3080f3102ed69b13ffe8cf8f09e98608c
-  ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE: quay.io/fedora-atomic-desktops-sealed/tools@sha256:927be1bd8673369c940305341764bdbb140c3a39d8546fd3891cb460affbcdc6
+  ATTESTOS_FEDORA_SOURCE_COMMIT: a5daa80297a062e2ffa8f018264de3594842fac4
+  ATTESTOS_FEDORA_UPSTREAM_RUN_ID: '24482575655'
+  ATTESTOS_FEDORA_IMAGE_CREATED: '2026-04-15T23:00:51.271335521Z'
+  ATTESTOS_FEDORA_IMAGE_REFERENCE: quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d0e34c45cb33adbeee3ada65b33addbb30297eb938bdb7af35c67b63b7028eb7
+  ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE: quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d0e34c45cb33adbeee3ada65b33addbb30297eb938bdb7af35c67b63b7028eb7
   ATTESTOS_FEDORA_OVMF_VARS_SHA256: 07029be230ad284b910e94e16dbd05f5b495f194dea90629bfdf94cb390b853b
 
 jobs:
@@ -93,8 +95,13 @@ jobs:
           skopeo inspect --raw \
             "docker://$ATTESTOS_FEDORA_IMAGE_REFERENCE" \
             > fedora-output/source-manifest.json
+          skopeo inspect \
+            "docker://$ATTESTOS_FEDORA_IMAGE_REFERENCE" \
+            > fedora-output/source-inspection.json
           computed_digest="sha256:$(sha256sum fedora-output/source-manifest.json | cut -d' ' -f1)"
           [[ "$computed_digest" == "$expected_digest" ]]
+          [[ "$(jq -r .Created fedora-output/source-inspection.json)" == \
+             "$ATTESTOS_FEDORA_IMAGE_CREATED" ]]
           [[ "$(sha256sum trust/fedora-sealed-cosign.pub | cut -d' ' -f1)" == \
              454e4bc8d59d3c356d193a006d2dbf98a2cbdac6db7e3320da2c57590b6e3ba4 ]]
           [[ "$(sha256sum trust/fedora-sealed-secureboot-db.pem | cut -d' ' -f1)" == \
@@ -119,6 +126,8 @@ jobs:
             --arg image_reference "$ATTESTOS_FEDORA_IMAGE_REFERENCE" \
             --arg installer_reference "$ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE" \
             --arg source_commit "$ATTESTOS_FEDORA_SOURCE_COMMIT" \
+            --arg upstream_run_id "$ATTESTOS_FEDORA_UPSTREAM_RUN_ID" \
+            --arg image_created "$ATTESTOS_FEDORA_IMAGE_CREATED" \
             --arg manifest_sha256 "${computed_digest#sha256:}" \
             --arg installer_manifest_sha256 "${computed_installer_digest#sha256:}" \
             '{
@@ -126,6 +135,8 @@ jobs:
               image_reference: $image_reference,
               installer_reference: $installer_reference,
               upstream_source_commit: $source_commit,
+              upstream_run_id: $upstream_run_id,
+              image_created: $image_created,
               manifest_sha256: $manifest_sha256,
               installer_manifest_sha256: $installer_manifest_sha256,
               platform: {os: "linux", architecture: "amd64"}
@@ -178,6 +189,7 @@ jobs:
           name: fedora-sealed-positive-control-${{ github.sha }}
           path: |
             fedora-output/source-manifest.json
+            fedora-output/source-inspection.json
             fedora-output/source-signature.json
             fedora-output/installer-manifest.json
             fedora-output/installer-signature.json

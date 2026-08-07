@@ -173,6 +173,23 @@ def test_version_matched_installer_uses_source_prepare_root_contract():
     assert 'source-prepare-root.sha256' in builder
 
 
+def test_historical_control_binds_source_and_installer_to_one_digest():
+    workflow = (
+        ROOT / ".github/workflows/fedora-sealed-uki-positive-control.yml"
+    ).read_text()
+    image_line = next(
+        line for line in workflow.splitlines()
+        if line.strip().startswith("ATTESTOS_FEDORA_IMAGE_REFERENCE:")
+    )
+    installer_line = next(
+        line for line in workflow.splitlines()
+        if line.strip().startswith("ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE:")
+    )
+    assert image_line.split(": ", 1)[1] == installer_line.split(": ", 1)[1]
+    assert "ATTESTOS_FEDORA_UPSTREAM_RUN_ID: '24482575655'" in workflow
+    assert "source-inspection.json" in workflow
+
+
 def test_cli_enforcement_writes_failure_receipt(tmp_path):
     static = static_evidence()
     guest = guest_evidence()
