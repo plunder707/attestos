@@ -1,2 +1,3 @@
-# bootc-image-builder's qcow2 type rejects filesystem customizations. Let the
-# builder use its supported default layout for this disposable canary.
+# This pinned bootc-image-builder rejects external filesystem customizations
+# for qcow2. The candidate image carries its bounded partition contract at the
+# canonical /usr/lib/image-builder/bootc/disk.yaml path instead.

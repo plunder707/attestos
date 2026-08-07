@@ -57,6 +57,7 @@ jobs:
             openssl \
             ovmf \
             podman \
+            python3-pytest \
             python3-yaml \
             qemu-system-x86 \
             sbsigntool \
@@ -64,6 +65,9 @@ jobs:
             swtpm \
             swtpm-tools \
             tpm2-tools
+
+      - name: Validate canary contracts
+        run: python3 -m pytest -q
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -158,6 +162,16 @@ jobs:
             --image localhost/attestos:uki-candidate \
             --output uki-output/static-inspection.json
 
+          sudo podman run \
+            --rm \
+            --entrypoint /usr/bin/cat \
+            localhost/attestos:uki-candidate \
+            /usr/lib/image-builder/bootc/disk.yaml \
+            > uki-output/disk-layout.yaml
+          cmp \
+            system_files/usr/lib/image-builder/bootc/disk.yaml \
+            uki-output/disk-layout.yaml
+
       - name: Build QCOW2 without publishing
         run: |
           set -euxo pipefail
@@ -208,6 +222,7 @@ jobs:
             canary-base-index.json
             canary-base-amd64-manifest.json
             canary-base-provenance.json
+            uki-output/disk-layout.yaml
             uki-output/static-inspection.json
             uki-output/receipt.json
             uki-output/admission.json
