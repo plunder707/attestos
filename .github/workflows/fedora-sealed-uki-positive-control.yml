@@ -312,6 +312,7 @@ jobs:
             fedora-output/disk.sha256
             fedora-output/upstream-boot/serial.log
             fedora-output/upstream-boot/console-driver.log
+            fedora-output/upstream-boot/screen-*.ppm
             fedora-output/upstream-boot/debugfs.log
           if-no-files-found: warn
           retention-days: 14

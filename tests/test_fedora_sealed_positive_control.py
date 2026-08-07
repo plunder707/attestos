@@ -561,8 +561,28 @@ def test_upstream_pair_is_frozen_without_a_run_local_signing_authority():
     assert "ATTESTOS_FEDORA_OVMF_CODE" in runner
 
 
-def test_console_driver_can_type_probe_path_underscore():
-    assert console.KEYS["_"] == "shift-minus"
+def test_console_driver_pulses_only_return_across_slow_tcg_boot():
+    source = (ROOT / "scripts/drive_fedora_sealed_console.py").read_text()
+    assert 'default=960' in source
+    assert 'default=30' in source
+    assert 'qmp.sendkey("ret")' in source
+    assert "ctrl-alt-f9" not in source
+    assert "type_text" not in source
+    assert "console_probe_attempt" not in source
+    assert "console_return_attempt" in source
+    assert 'qmp.screendump(screenshot)' in source
+
+
+def test_fedora_runner_preserves_visual_diagnostics_without_guest_network():
+    runner = (ROOT / "scripts/run_fedora_sealed_positive_control.sh").read_text()
+    workflow = (
+        ROOT / ".github/workflows/fedora-sealed-uki-positive-control.yml"
+    ).read_text()
+    assert "-nic none" in runner
+    assert "-vga std" in runner
+    assert '--output-dir "$output"' in runner
+    assert "return_attempts=" in runner
+    assert "screen-*.ppm" in workflow
 
 
 def test_probe_unit_is_explicitly_outside_sealed_usr_and_non_authoritative():

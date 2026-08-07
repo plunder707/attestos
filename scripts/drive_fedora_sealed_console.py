@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive the upstream-enabled debug console without giving the guest a NIC."""
+"""Drive bounded pre-boot prompts and capture the headless guest display."""
 
 from __future__ import annotations
 
@@ -8,14 +8,6 @@ import json
 import socket
 import time
 from pathlib import Path
-
-
-KEYS = {
-    " ": "spc",
-    "/": "slash",
-    ".": "dot",
-    "_": "shift-minus",
-}
 
 
 class QMP:
@@ -51,14 +43,11 @@ class QMP:
             {"command-line": f"sendkey {key}"},
         )
 
-    def type_text(self, value: str) -> None:
-        for character in value:
-            key = KEYS.get(character, character)
-            if not (key.isalnum() or key in KEYS.values()):
-                raise ValueError(f"unsupported console character: {character!r}")
-            self.sendkey(key)
-            time.sleep(0.025)
-        self.sendkey("ret")
+    def status(self) -> str:
+        return str(self.execute("query-status")["return"]["status"])
+
+    def screendump(self, path: Path) -> None:
+        self.execute("screendump", {"filename": str(path)})
 
 
 def wait_for_socket(path: Path, timeout: float = 30.0) -> None:
@@ -73,27 +62,60 @@ def wait_for_socket(path: Path, timeout: float = 30.0) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--qmp", type=Path, required=True)
-    parser.add_argument("--boot-wait", type=int, default=150)
-    parser.add_argument("--attempts", type=int, default=5)
-    parser.add_argument("--attempt-interval", type=int, default=45)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--drive-seconds", type=int, default=960)
+    parser.add_argument("--input-interval", type=int, default=30)
+    parser.add_argument("--screenshot-interval", type=int, default=120)
     args = parser.parse_args()
 
     wait_for_socket(args.qmp)
     qmp = QMP(args.qmp)
-    # An empty LUKS passphrase and the systemd-boot default both accept Return.
-    for _ in range(max(1, args.boot_wait // 20)):
-        time.sleep(20)
-        qmp.sendkey("ret")
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    next_input = started + args.input_interval
+    next_screenshot = started + args.screenshot_interval
+    deadline = started + args.drive_seconds
+    input_attempt = 0
+    screenshot_attempt = 0
 
-    for attempt in range(1, args.attempts + 1):
-        qmp.sendkey("ctrl-alt-f9")
-        time.sleep(3)
-        qmp.type_text("mount /dev/vdb /mnt")
-        time.sleep(2)
-        qmp.type_text("python3 /mnt/fedora_sealed_guest_probe.py")
-        print(f"console_probe_attempt={attempt}", flush=True)
-        if attempt != args.attempts:
-            time.sleep(args.attempt_interval)
+    # The development root uses an empty LUKS passphrase. Under TCG the prompt
+    # can appear several minutes after firmware starts the 247 MiB UKI, so keep
+    # sending only Return across the bounded boot window. The installed probe is
+    # a systemd unit; typing shell commands on an assumed tty would be a false
+    # execution signal.
+    while time.monotonic() < deadline:
+        now = time.monotonic()
+        time.sleep(max(0.0, min(next_input, next_screenshot, deadline) - now))
+        elapsed = int(time.monotonic() - started)
+        try:
+            if time.monotonic() >= next_input:
+                qmp.sendkey("ret")
+                input_attempt += 1
+                print(
+                    f"console_return_attempt={input_attempt} "
+                    f"elapsed_seconds={elapsed} qemu_status={qmp.status()}",
+                    flush=True,
+                )
+                next_input += args.input_interval
+            if time.monotonic() >= next_screenshot:
+                screenshot_attempt += 1
+                screenshot = args.output_dir / f"screen-{elapsed:04d}s.ppm"
+                try:
+                    qmp.screendump(screenshot)
+                    print(
+                        f"console_screenshot={screenshot.name} "
+                        f"bytes={screenshot.stat().st_size}",
+                        flush=True,
+                    )
+                except RuntimeError as error:
+                    print(
+                        f"console_screenshot_error={type(error).__name__}",
+                        flush=True,
+                    )
+                next_screenshot += args.screenshot_interval
+        except (BrokenPipeError, ConnectionResetError, RuntimeError):
+            print("console_driver_qmp_closed=true", flush=True)
+            return 0
     return 0
 
 

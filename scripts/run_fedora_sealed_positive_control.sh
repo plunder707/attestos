@@ -62,6 +62,7 @@ timeout --signal=TERM 18m qemu-system-x86_64 \
     -smp 2 \
     -m 4096 \
     -display none \
+    -vga std \
     -monitor none \
     -qmp "unix:$qmp_socket,server=on,wait=off" \
     -serial "file:$serial" \
@@ -80,14 +81,16 @@ qemu_pid=$!
 
 python3 scripts/drive_fedora_sealed_console.py \
     --qmp "$qmp_socket" \
+    --output-dir "$output" \
     > "$output/console-driver.log" 2>&1 &
 driver_pid=$!
 
 while kill -0 "$qemu_pid" >/dev/null 2>&1; do
     sleep 10
-    printf 'guest_progress serial_bytes=%s probe_attempts=%s\n' \
+    printf 'guest_progress serial_bytes=%s return_attempts=%s screenshots=%s\n' \
         "$(stat -c %s "$serial" 2>/dev/null || echo 0)" \
-        "$(grep -c console_probe_attempt "$output/console-driver.log" 2>/dev/null || true)"
+        "$(grep -c console_return_attempt "$output/console-driver.log" 2>/dev/null || true)" \
+        "$(find "$output" -maxdepth 1 -name 'screen-*.ppm' -printf . 2>/dev/null | wc -c)"
     if grep -aEq 'Error loading EFI binary .*: Access denied|failed to start .*: Access Denied' "$serial"; then
         echo "Secure Boot firmware rejected the installed UKI" >&2
         kill "$qemu_pid" >/dev/null 2>&1 || true
