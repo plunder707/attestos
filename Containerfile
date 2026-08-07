@@ -7,7 +7,11 @@ COPY system_files /system_files
 # currently blocked by anti-cheat whitelists, so proving attestation here is
 # the case worth proving. Building on SteamOS would demonstrate nothing,
 # because SteamOS is already allowed.
-FROM ghcr.io/ublue-os/bazzite:stable
+ARG BASE_IMAGE=ghcr.io/ublue-os/bazzite:stable
+FROM ${BASE_IMAGE}
+
+ARG ATTESTOS_SOURCE_COMMIT=unknown
+ENV ATTESTOS_SOURCE_COMMIT=${ATTESTOS_SOURCE_COMMIT}
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \

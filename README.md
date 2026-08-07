@@ -10,7 +10,7 @@ This repository is the image that produces the evidence.
 
 ---
 
-> ## STATUS: CONTAINER BUILD AND EMULATED TPM MECHANICS VERIFIED. NOTHING HAS BOOTED.
+> ## STATUS: CONTAINER AND RAW TPM MECHANICS VERIFIED. BOOTED-IMAGE CANARY PENDING.
 >
 > GitHub Actions run
 > [31143048491](https://github.com/plunder707/attestos/actions/runs/31143048491)
@@ -26,6 +26,14 @@ This repository is the image that produces the evidence.
 > establishes a functioning production attestation system.
 >
 > Treat this as a work in progress, not a distribution.
+
+The next experiment is specified in [`BOOTED_IMAGE_CANARY.md`](BOOTED_IMAGE_CANARY.md).
+It builds a local-only QCOW2 on a disposable GitHub runner, boots it with
+QEMU/OVMF and swtpm, and accepts only a bounded guest receipt. It uses TCG,
+has no guest network, requests read-only repository permission, publishes no
+image, and leaves manufacturer, policy, and production trust false.
+The next UKI engineering candidate and its independent admission criteria are
+recorded in [`UKI_BASE_DECISION.md`](UKI_BASE_DECISION.md).
 
 ---
 
@@ -85,11 +93,13 @@ kernel handling Bazzite already does, against a base that excludes the UKI
 packages on purpose. That is a change to how the image boots, not a layer on
 top of it.
 
-Three ways forward, none of them chosen yet:
+The source investigation now narrows the practical choices:
 
 1. Do the UKI work on Bazzite anyway and accept the divergence from the base.
-2. Move to a base that already supports UKI. The bootc ecosystem does deal
-   with `ukify`; Bazzite specifically does not.
+2. Move to a CentOS bootc-derived base that carries a prebuilt UKI. Bluefin
+   LTS is the leading engineering candidate because its current build
+   explicitly installs `kernel-uki-virt`, and upstream bootc has landed sealed
+   UKI/composefs machinery. This is a candidate, not a trust result.
 3. Find a measurement that does not depend on a UKI. Harder, because the
    whole point of the UKI is that it seals a command line the user would
    otherwise be able to edit.
@@ -146,7 +156,11 @@ their work.
 - How a verifier turns the agent's runtime `bootc status` deployment claim
   into verified image identity. The claim is metadata, not signed authority;
   on systems without `bootc` it is explicitly `unavailable`.
-- Which of the three UKI routes to take, given Bazzite excludes UKI kernels.
+- Whether the Bazzite-derived QCOW2 passes the isolated booted-image evidence
+  canary without confusing mechanics with policy.
+- Whether Bluefin LTS/CentOS bootc actually boots the intended signed UKI with
+  the attestos command line embedded and measured. Package presence alone is
+  insufficient.
 - Is PCR 15 populated the way the design assumes on a bootc root.
 - Does MOK enrollment produce a PCR 7 value stable enough to write a policy
   against.

@@ -1,0 +1,146 @@
+---
+name: Booted image evidence canary
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Containerfile'
+      - 'Containerfile.boot-canary'
+      - 'build_files/**'
+      - 'system_files/**'
+      - 'disk_config/disk.toml'
+      - 'scripts/run_booted_image_canary.sh'
+      - 'scripts/validate_booted_image_receipt.py'
+      - 'tests/test_booted_image_receipt.py'
+      - '.github/workflows/booted-image-evidence-canary.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: booted-image-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ATTESTOS_BASE_IMAGE: ghcr.io/ublue-os/bazzite:stable
+  ATTESTOS_BUILDER_IMAGE: quay.io/centos-bootc/bootc-image-builder@sha256:2b52843ea2bfda73b0a08d97e76b734393b1d3a804681b9fabb26723bd3a2f0b
+
+jobs:
+  booted-image:
+    name: Bazzite-derived QCOW2 / OVMF / swtpm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Maximize disposable runner space
+        uses: ublue-os/remove-unwanted-software@cc0becac701cf642c8f0a6613bbdaf5dc36b259e # v9
+        with:
+          remove-codeql: true
+
+      - name: Install canary dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            jq \
+            ovmf \
+            podman \
+            qemu-system-x86 \
+            skopeo \
+            swtpm \
+            swtpm-tools
+
+      - name: Resolve immutable Bazzite base
+        id: base
+        run: |
+          set -euo pipefail
+          digest=$(skopeo inspect --format '{{.Digest}}' \
+            "docker://$ATTESTOS_BASE_IMAGE")
+          [[ "$digest" == sha256:* ]]
+          reference="${ATTESTOS_BASE_IMAGE%@*}@$digest"
+          echo "reference=$reference" >> "$GITHUB_OUTPUT"
+          echo "ATTESTOS_BASE_REFERENCE=$reference" >> "$GITHUB_ENV"
+
+      - name: Build canary-only image derivative
+        run: |
+          set -euxo pipefail
+          sudo podman build \
+            --pull=always \
+            --build-arg "BASE_IMAGE=${{ steps.base.outputs.reference }}" \
+            --build-arg "ATTESTOS_SOURCE_COMMIT=$GITHUB_SHA" \
+            --tag localhost/attestos:boot-canary-base \
+            --file Containerfile \
+            .
+          sudo podman build \
+            --pull=never \
+            --build-arg BASE_IMAGE=localhost/attestos:boot-canary-base \
+            --tag localhost/attestos:boot-canary \
+            --file Containerfile.boot-canary \
+            .
+
+      - name: Build QCOW2 without publishing
+        run: |
+          set -euxo pipefail
+          mkdir -p output
+          sudo podman run \
+            --rm \
+            --privileged \
+            --pull=always \
+            --net=host \
+            --security-opt label=type:unconfined_t \
+            -v "$PWD/disk_config/disk.toml:/config.toml:ro" \
+            -v "$PWD/output:/output" \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            "$ATTESTOS_BUILDER_IMAGE" \
+            --type qcow2 \
+            --use-librepo=True \
+            --rootfs=btrfs \
+            localhost/attestos:boot-canary
+          test -s output/qcow2/disk.qcow2
+          sudo chown -R "$(id -u):$(id -g)" output
+
+      - name: Boot under TCG with no network and validate evidence
+        env:
+          ATTESTOS_BASE_REFERENCE: ${{ steps.base.outputs.reference }}
+          ATTESTOS_BUILDER_REFERENCE: ${{ env.ATTESTOS_BUILDER_IMAGE }}
+        run: |
+          set -euxo pipefail
+          bash scripts/run_booted_image_canary.sh \
+            output/qcow2/disk.qcow2 \
+            canary-output
+
+      - name: Publish bounded audit artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: booted-image-evidence-${{ github.sha }}
+          path: |
+            canary-output/receipt.json
+            canary-output/serial.log
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 9
+
+      - name: Summarize trust boundary
+        if: always()
+        run: |
+          {
+            echo '## Booted image evidence canary'
+            echo
+            echo '- Disposable GitHub runner: yes'
+            echo '- QEMU accelerator: TCG (no KVM)'
+            echo '- Guest network: none'
+            echo '- Package or image publication: none'
+            echo '- Manufacturer trust: false'
+            echo '- Policy trust: false'
+            echo '- Production trust: false'
+            if [[ -f canary-output/receipt.json ]]; then
+              echo "- Receipt SHA-256: \`$(sha256sum canary-output/receipt.json | cut -d' ' -f1)\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
