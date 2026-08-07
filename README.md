@@ -35,8 +35,10 @@ This repository is the image that produces the evidence.
 > boot-policy admission remain unsolved. Neither green run establishes a
 > functioning production attestation system.
 >
-> A separate Fedora sealed-image positive control now passes twice in
-> [run 31218059725](https://github.com/plunder707/attestos/actions/runs/31218059725).
+> A separate Fedora sealed-image positive control passed twice in
+> [run 31218059725](https://github.com/plunder707/attestos/actions/runs/31218059725)
+> and again on the merged-source head in
+> [run 31219745053](https://github.com/plunder707/attestos/actions/runs/31219745053).
 > It proves the harness can boot an immutable upstream-signed UKI, join the
 > firmware-selected path and loaded-file hash to the preboot inspection,
 > observe nonzero PCR 11, and reject an unsigned `.cmdline` mutation. This is a

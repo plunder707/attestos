@@ -25,6 +25,30 @@ The current reference runs are:
 - booted image: [31159951490](https://github.com/plunder707/attestos/actions/runs/31159951490)
 - raw protocol seam: [31160003873](https://github.com/plunder707/attested-gaming/actions/runs/31160003873)
 
+## Reproduce the Fedora sealed UKI harness control
+
+This is the current end-to-end UKI measurement experiment. It is separate from
+the Bazzite image preview and does not produce an installable image.
+
+1. Fork this repository on GitHub.
+2. Open **Actions > Fedora sealed UKI positive control**.
+3. Choose **Run workflow** on the commit you want to test.
+4. Wait for **systemd-boot / loaded UKI / PCR 11** to finish.
+5. Download the bounded artifact and inspect `positive-control.json`.
+
+A pass requires all 13 gates to be `true`, `failed_gates` to be empty, and
+`authority` to equal `harness_positive_control_only`. The receipt must keep
+`manufacturer_trusted`, `policy_trusted`, and `production_trusted` explicitly
+`false`.
+
+The final merged-source reference run is
+[31219745053](https://github.com/plunder707/attestos/actions/runs/31219745053).
+It joins the immutable source and installer, the one statically inspected UKI,
+firmware selection, the loaded-file hash, Secure Boot rejection of an unsigned
+`.cmdline` mutation, and nonzero SHA-256 PCR 11. See
+[`FEDORA_SEALED_POSITIVE_CONTROL.md`](FEDORA_SEALED_POSITIVE_CONTROL.md) for
+the frozen inputs, stop rules, and exact non-claims.
+
 ## Local source tests
 
 Requirements: Python 3.10 or newer and `pytest`.
@@ -91,4 +115,5 @@ creates a fresh software TPM state directory for every invocation.
 
 The current Bazzite receipt is intentionally negative for policy admission:
 there was no booted UKI signal, the lockdown arguments were absent, and PCRs
-11, 12, and 15 were zero.
+11 and 15 were zero. PCR 12 was also zero, which is a valid baseline when no
+external command-line input is supplied and is not an independent failure.
