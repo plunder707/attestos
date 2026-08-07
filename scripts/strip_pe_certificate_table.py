@@ -82,7 +82,37 @@ def strip_certificate_table(data: bytes) -> tuple[bytes, dict]:
 
     certificate_end = certificate_offset + certificate_size
     if certificate_end > len(data):
-        raise PEError("certificate table extends beyond input")
+        missing = certificate_end - len(data)
+        last_length = None
+        last_padded_end = None
+        last_payload_end = None
+        cursor = certificate_offset
+        while cursor + 8 <= len(data):
+            length = struct.unpack_from("<I", data, cursor)[0]
+            if length < 8:
+                break
+            padded_end = cursor + ((length + 7) & ~7)
+            payload_end = cursor + length
+            last_length = length
+            last_padded_end = padded_end
+            last_payload_end = payload_end
+            if padded_end >= certificate_end:
+                break
+            cursor = padded_end
+        possible_omitted_alignment = (
+            0 < missing <= 7 and
+            last_payload_end == len(data) and
+            last_padded_end == certificate_end
+        )
+        raise PEError(
+            "certificate table extends beyond input: "
+            f"offset={certificate_offset} size={certificate_size} "
+            f"declared_end={certificate_end} file_size={len(data)} "
+            f"missing={missing} last_length={last_length} "
+            f"last_payload_end={last_payload_end} "
+            f"last_padded_end={last_padded_end} "
+            f"possible_omitted_alignment={possible_omitted_alignment}"
+        )
     terminal_padding = data[certificate_end:]
     if terminal_padding and (
         len(terminal_padding) > MAX_TERMINAL_PADDING or any(terminal_padding)

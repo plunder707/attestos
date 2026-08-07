@@ -192,6 +192,17 @@ def test_certificate_strip_accepts_only_bounded_zero_terminal_padding():
     assert details["terminal_padding_all_zero"] is True
 
 
+def test_certificate_strip_reports_possible_omitted_certificate_alignment():
+    source = bytearray(synthetic_signed_pe())
+    struct.pack_into("<I", source, 0x200, 15)
+    del source[-1]
+    with pytest.raises(
+        stripper.PEError,
+        match=r"missing=1 .*possible_omitted_alignment=True",
+    ):
+        stripper.strip_certificate_table(bytes(source))
+
+
 def test_positive_control_requires_every_join():
     result = validator.evaluate(
         static_evidence(), guest_evidence(), provenance(),
