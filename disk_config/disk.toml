@@ -1,3 +1,2 @@
-[[customizations.filesystem]]
-mountpoint = "/"
-minsize = "20 GiB"
+# bootc-image-builder's qcow2 type rejects filesystem customizations. Let the
+# builder use its supported default layout for this disposable canary.

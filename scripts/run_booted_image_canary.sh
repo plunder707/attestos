@@ -77,7 +77,6 @@ timeout --signal=TERM 25m qemu-system-x86_64 \
     -display none \
     -monitor none \
     -serial "file:$serial" \
-    -no-reboot \
     -nic none \
     -drive "if=pflash,format=raw,readonly=on,file=$ovmf_code" \
     -drive "if=pflash,format=raw,file=$vars" \

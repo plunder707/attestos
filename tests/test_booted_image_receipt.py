@@ -7,6 +7,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "validate_booted_image_receipt.py"
+RUNNER = ROOT / "scripts" / "run_booted_image_canary.sh"
 SPEC = importlib.util.spec_from_file_location("boot_receipt", SCRIPT)
 assert SPEC and SPEC.loader
 module = importlib.util.module_from_spec(SPEC)
@@ -91,3 +92,10 @@ def test_host_receipt_preserves_non_authority(tmp_path):
     assert receipt["manufacturer_trusted"] is False
     assert receipt["policy_trusted"] is False
     assert receipt["production_trusted"] is False
+
+
+def test_qemu_runner_allows_firmware_boot_option_reset():
+    runner = RUNNER.read_text(encoding="utf-8")
+    assert "-no-reboot" not in runner
+    assert "-nic none" in runner
+    assert "accel=tcg" in runner
