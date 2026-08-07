@@ -10,6 +10,7 @@ fi
 disk=$(realpath -m "$1")
 output=$(realpath -m "$2")
 source_reference=${ATTESTOS_FEDORA_IMAGE_REFERENCE:?missing immutable image reference}
+installer_reference=${ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE:?missing immutable installer reference}
 mapper="attestos-fedora-${GITHUB_RUN_ID:-local}-$$"
 mount_root=$(mktemp -d -p /tmp attestos-fedora-root.XXXXXX)
 nbd=""
@@ -69,6 +70,7 @@ sudo mkdir -p "$mount_root/boot"
 sudo mount "$esp" "$mount_root/boot"
 
 sudo podman pull "$source_reference"
+sudo podman pull "$installer_reference"
 sudo podman run \
     --rm \
     --privileged \
@@ -79,7 +81,7 @@ sudo podman run \
     -v /var/lib/containers:/var/lib/containers \
     -v /dev:/dev \
     -v /:/run/host \
-    "$source_reference" \
+    "$installer_reference" \
     bootc install to-filesystem \
         --source-imgref="containers-storage:$source_reference" \
         --bootloader=systemd \
@@ -91,6 +93,7 @@ sudo python3 scripts/inspect_fedora_sealed_disk.py \
     --esp "$mount_root/boot" \
     --certificate trust/fedora-sealed-secureboot-db.pem \
     --source-reference "$source_reference" \
+    --installer-reference "$installer_reference" \
     --output "$output/static-inspection.json"
 
 sync

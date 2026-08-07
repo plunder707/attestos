@@ -29,6 +29,7 @@ concurrency:
 env:
   ATTESTOS_FEDORA_SOURCE_COMMIT: cbe45816bb166c9df97c0714014f3ea7bdffcdac
   ATTESTOS_FEDORA_IMAGE_REFERENCE: quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d60c9ab5f847858f3b316465ae2138e3080f3102ed69b13ffe8cf8f09e98608c
+  ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE: quay.io/fedora-atomic-desktops-sealed/tools@sha256:927be1bd8673369c940305341764bdbb140c3a39d8546fd3891cb460affbcdc6
   ATTESTOS_FEDORA_OVMF_VARS_SHA256: 07029be230ad284b910e94e16dbd05f5b495f194dea90629bfdf94cb390b853b
 
 jobs:
@@ -103,15 +104,30 @@ jobs:
             "$ATTESTOS_FEDORA_IMAGE_REFERENCE" \
             > fedora-output/source-signature.json
 
+          expected_installer_digest="${ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE##*@}"
+          skopeo inspect --raw \
+            "docker://$ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE" \
+            > fedora-output/installer-manifest.json
+          computed_installer_digest="sha256:$(sha256sum fedora-output/installer-manifest.json | cut -d' ' -f1)"
+          [[ "$computed_installer_digest" == "$expected_installer_digest" ]]
+          cosign verify \
+            --key trust/fedora-sealed-cosign.pub \
+            "$ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE" \
+            > fedora-output/installer-signature.json
+
           jq -n \
             --arg image_reference "$ATTESTOS_FEDORA_IMAGE_REFERENCE" \
+            --arg installer_reference "$ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE" \
             --arg source_commit "$ATTESTOS_FEDORA_SOURCE_COMMIT" \
             --arg manifest_sha256 "${computed_digest#sha256:}" \
+            --arg installer_manifest_sha256 "${computed_installer_digest#sha256:}" \
             '{
               format: "attestos.fedora_sealed_provenance/v1",
               image_reference: $image_reference,
+              installer_reference: $installer_reference,
               upstream_source_commit: $source_commit,
               manifest_sha256: $manifest_sha256,
+              installer_manifest_sha256: $installer_manifest_sha256,
               platform: {os: "linux", architecture: "amd64"}
             }' > fedora-output/provenance.json
 
@@ -163,6 +179,8 @@ jobs:
           path: |
             fedora-output/source-manifest.json
             fedora-output/source-signature.json
+            fedora-output/installer-manifest.json
+            fedora-output/installer-signature.json
             fedora-output/provenance.json
             fedora-output/static-inspection.json
             fedora-output/guest-evidence.json

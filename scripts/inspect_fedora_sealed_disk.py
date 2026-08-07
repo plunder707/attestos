@@ -36,7 +36,12 @@ def dump_cmdline(uki: Path, destination: Path) -> bytes:
     return destination.read_bytes().rstrip(b"\x00")
 
 
-def inspect(esp: Path, certificate: Path, source_reference: str) -> dict:
+def inspect(
+    esp: Path,
+    certificate: Path,
+    source_reference: str,
+    installer_reference: str,
+) -> dict:
     esp = esp.resolve()
     systemd_boot = esp / "EFI" / "systemd" / "systemd-bootx64.efi"
     ukis = sorted((esp / "EFI" / "Linux").glob("*.efi"))
@@ -70,6 +75,7 @@ def inspect(esp: Path, certificate: Path, source_reference: str) -> dict:
     return {
         "format": FORMAT,
         "source_reference": source_reference,
+        "installer_reference": installer_reference,
         "esp": {
             "systemd_boot_path": "\\EFI\\systemd\\systemd-bootx64.efi",
             "systemd_boot_sha256": sha256(systemd_boot),
@@ -97,9 +103,15 @@ def main() -> int:
     parser.add_argument("--esp", type=Path, required=True)
     parser.add_argument("--certificate", type=Path, required=True)
     parser.add_argument("--source-reference", required=True)
+    parser.add_argument("--installer-reference", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    result = inspect(args.esp, args.certificate, args.source_reference)
+    result = inspect(
+        args.esp,
+        args.certificate,
+        args.source_reference,
+        args.installer_reference,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     print(json.dumps({

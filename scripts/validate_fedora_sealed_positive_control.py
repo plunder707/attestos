@@ -51,12 +51,19 @@ def evaluate(static: dict, guest: dict, provenance: dict) -> dict:
     pcr11 = digest(guest.get("pcr_values", {}).get("sha256", {}).get("11"))
     source_reference = static.get("source_reference")
     provenance_reference = provenance.get("image_reference")
+    installer_reference = static.get("installer_reference")
+    provenance_installer = provenance.get("installer_reference")
 
     gates = {
         "immutable_source_join": (
             isinstance(source_reference, str) and
             source_reference == provenance_reference and
             "@sha256:" in source_reference
+        ),
+        "immutable_installer_join": (
+            isinstance(installer_reference, str) and
+            installer_reference == provenance_installer and
+            "@sha256:" in installer_reference
         ),
         "exactly_one_static_uki": static.get("esp", {}).get("uki_count") == 1,
         "static_uki_signature_verified": static_uki.get("signature_verified") is True,
@@ -91,6 +98,7 @@ def evaluate(static: dict, guest: dict, provenance: dict) -> dict:
         "gates": gates,
         "failed_gates": sorted(name for name, value in gates.items() if not value),
         "image_reference": source_reference,
+        "installer_reference": installer_reference,
         "loaded_uki_sha256": guest_uki.get("sha256"),
         "pcr11_sha256": pcr11,
         "manufacturer_trusted": False,

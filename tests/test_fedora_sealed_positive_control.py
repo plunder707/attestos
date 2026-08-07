@@ -29,6 +29,10 @@ IMAGE = (
     "quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:"
     + "d" * 64
 )
+INSTALLER = (
+    "quay.io/fedora-atomic-desktops-sealed/tools@sha256:"
+    + "e" * 64
+)
 UKI = "a" * 64
 PCR11 = "b" * 64
 
@@ -37,6 +41,7 @@ def static_evidence() -> dict:
     return {
         "format": "attestos.fedora_sealed_static/v1",
         "source_reference": IMAGE,
+        "installer_reference": INSTALLER,
         "esp": {"uki_count": 1},
         "uki": {
             "uefi_path": "\\EFI\\Linux\\fedora.efi",
@@ -71,7 +76,7 @@ def guest_evidence() -> dict:
 
 
 def provenance() -> dict:
-    return {"image_reference": IMAGE}
+    return {"image_reference": IMAGE, "installer_reference": INSTALLER}
 
 
 def test_positive_control_requires_every_join():
@@ -88,6 +93,14 @@ def test_zero_pcr11_fails_closed():
     result = validator.evaluate(static_evidence(), guest, provenance())
     assert result["passed"] is False
     assert result["gates"]["pcr11_nonzero"] is False
+
+
+def test_installer_version_cannot_drift_from_provenance():
+    evidence = provenance()
+    evidence["installer_reference"] = INSTALLER.replace("e" * 64, "f" * 64)
+    result = validator.evaluate(static_evidence(), guest_evidence(), evidence)
+    assert result["passed"] is False
+    assert result["gates"]["immutable_installer_join"] is False
 
 
 def test_unloaded_decoy_cannot_satisfy_identity_join():

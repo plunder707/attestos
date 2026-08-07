@@ -11,13 +11,14 @@ The canary passes only if one immutable Fedora sealed image produces all of
 these joined observations:
 
 1. the source OCI manifest verifies against the pinned upstream Cosign key;
-2. the installed ESP contains systemd-boot and exactly one UKI;
-3. that UKI verifies against the pinned upstream development Secure Boot key;
-4. changing its embedded `.cmdline` invalidates the PE signature;
-5. the booted guest reports both `systemd-boot` and `systemd-stub` EFI variables;
-6. `StubImageIdentifier` names the same UKI inspected before boot;
-7. the loaded file's SHA-256 equals the preboot SHA-256; and
-8. systemd-stub declares PCR 11 and the guest reads a nonzero SHA-256 PCR 11.
+2. the version-matched installer OCI manifest verifies against that key;
+3. the installed ESP contains systemd-boot and exactly one UKI;
+4. that UKI verifies against the pinned upstream development Secure Boot key;
+5. changing its embedded `.cmdline` invalidates the PE signature;
+6. the booted guest reports both `systemd-boot` and `systemd-stub` EFI variables;
+7. `StubImageIdentifier` names the same UKI inspected before boot;
+8. the loaded file's SHA-256 equals the preboot SHA-256; and
+9. systemd-stub declares PCR 11 and the guest reads a nonzero SHA-256 PCR 11.
 
 File presence, package presence, a nonzero PCR by itself, or a matching hash
 without the loaded-path identity join cannot pass.
@@ -28,6 +29,8 @@ without the loaded-path identity join cannot pass.
   `cbe45816bb166c9df97c0714014f3ea7bdffcdac`
 - Fedora 44 Silverblue sealed image:
   `quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d60c9ab5f847858f3b316465ae2138e3080f3102ed69b13ffe8cf8f09e98608c`
+- Fedora 44 tools image used to compute the sealed UKI's composefs digest:
+  `quay.io/fedora-atomic-desktops-sealed/tools@sha256:927be1bd8673369c940305341764bdbb140c3a39d8546fd3891cb460affbcdc6`
 - Upstream OVMF variable store SHA-256:
   `07029be230ad284b910e94e16dbd05f5b495f194dea90629bfdf94cb390b853b`
 - Vendored Cosign public key SHA-256:
@@ -39,6 +42,14 @@ The upstream QCOW2 publication workflow has not produced this versioned disk:
 its August 3 run stopped during `bcvk to-disk` before the ORAS push. This
 repository therefore installs the pinned container into a fresh 20 GiB QCOW2
 using the upstream partition and `bootc install to-filesystem` contract.
+
+The August 3 upstream build computed the UKI digest with the separately built
+tools image above (`bootc` build `202607302110.g73b4639e8`). The final image
+contains Fedora `bootc` 1.16.6, which computes a different composefs digest and
+correctly refuses that UKI. The canary therefore runs the install with the
+exact signed tools image that created the digest. Both image references are
+immutable, independently verified, and joined in the receipt; no digest check
+is disabled.
 
 ## Isolation
 
