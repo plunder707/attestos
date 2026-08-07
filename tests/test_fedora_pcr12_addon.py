@@ -61,8 +61,12 @@ def addon_static() -> dict:
             "boot_unsigned_rpm_sha256": "a392ae378b3b6b2d2cee9233c1f3aa2333c8f9f95f65c0b30724840706a29f3f",
             "ukify_sha256": "33c1bc2a0143ac287fe2300ef6177ea4f8e6ccaa71fab8ad44741e2d5a8a7edd",
             "addon_stub_sha256": "23370bb3685f804f5c722648379f3dcbe4474998030b1595ee85690e38350ce5",
-            "signature_tool": "immutable_fedora_systemd-sbsign",
-            "signing_image_reference": "example.invalid/fedora@sha256:" + "6" * 64,
+            "signature_tool": "pinned_fedora_systemd-sbsign",
+            "signer_base_reference": "docker.io/library/fedora@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898",
+            "systemd_rpm_sha256": "c9b1a19777ba6076bcaf6b73e4c296b3bcc2c0b983fa1c62379546f0c13da645",
+            "systemd_shared_rpm_sha256": "78b5b31d5a93d5f254d534c6afa8bc4a9f105d4f39319af36971b984f7308a67",
+            "systemd_sbsign_sha256": "57043bf3c84cb3e57bcf2eca79a25376db4c215f2268067b2a439b854136765a",
+            "systemd_shared_object_sha256": "e7793ddb7e73eba0c1d93d3030b8eee6b71f707d68c8bb61babdaedd3762b388",
             "unsigned_addon_sha256": "8" * 64,
         },
         "addon": {
@@ -250,11 +254,9 @@ def test_boot_input_must_join_exact_installed_disk_and_firmware():
     assert result["gates"]["identical_firmware_inputs_joined"] is False
 
 
-def test_signing_image_must_join_the_immutable_source():
+def test_signer_base_must_match_the_pinned_builder():
     evidence = addon_static()
-    evidence["builder"]["signing_image_reference"] = (
-        "example.invalid/decoy@sha256:" + "9" * 64
-    )
+    evidence["builder"]["signer_base_reference"] = "example.invalid/decoy@sha256:" + "9" * 64
     result = evaluate_with(addon_static_evidence=evidence)
     assert result["gates"]["pinned_matching_addon_builder"] is False
 
@@ -282,9 +284,15 @@ def test_scripts_preserve_nonpublication_and_private_key_boundary():
     workflow = (
         ROOT / ".github/workflows/fedora-sealed-uki-positive-control.yml"
     ).read_text()
+    signer_containerfile = (
+        ROOT / "canary/fedora-sealed/Containerfile.addon-signer"
+    ).read_text()
     assert 'python3 "$ukify" build' in preparer
     assert '--stub="$addon_stub"' in preparer
     assert "systemd-sbsign" in preparer
+    assert "ATTESTOS_FEDORA_SIGNER_IMAGE" in preparer
+    assert "ATTESTOS_SYSTEMD_SBSIGN_SHA256" in preparer
+    assert "ATTESTOS_SYSTEMD_SHARED_OBJECT_SHA256" in preparer
     assert "--network=none" in preparer
     assert "10-attestos-policy.unsigned.addon.efi" in preparer
     assert "--add-db" in preparer
@@ -298,6 +306,11 @@ def test_scripts_preserve_nonpublication_and_private_key_boundary():
     assert "disk_sha256: $disk_sha256" in runner
     assert "permissions:\n  contents: read" in workflow
     assert "packages: write" not in workflow
+    assert "attestos signer preflight" in workflow
+    assert "tampered signer preflight add-on still verifies" in workflow
+    assert "RUN " not in signer_containerfile
+    assert "fedora@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898" in signer_containerfile
+    assert "COPY usr/lib/systemd/systemd-sbsign" in signer_containerfile
     assert "fedora-output/static-inspection.json" in workflow
     assert "fedora-output/firmware-provenance.json" in workflow
     assert "fedora-output/pcr12/addon-public.pem" in workflow

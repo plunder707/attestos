@@ -11,11 +11,17 @@ source_vars=$(realpath "$1")
 output_vars=$(realpath -m "$2")
 output=$(realpath -m "$3")
 source_reference=${ATTESTOS_FEDORA_IMAGE_REFERENCE:?missing immutable image reference}
+signer_base_reference=${ATTESTOS_FEDORA_SIGNER_BASE_REFERENCE:?missing immutable signer base}
+signer_image=${ATTESTOS_FEDORA_SIGNER_IMAGE:?missing local signer image}
 systemd_nvr=${ATTESTOS_SYSTEMD_NVR:?missing pinned systemd NVR}
 ukify_rpm_sha256=${ATTESTOS_SYSTEMD_UKIFY_RPM_SHA256:?missing ukify RPM digest}
 boot_rpm_sha256=${ATTESTOS_SYSTEMD_BOOT_UNSIGNED_RPM_SHA256:?missing boot RPM digest}
 expected_ukify_sha256=${ATTESTOS_SYSTEMD_UKIFY_SHA256:?missing ukify file digest}
 expected_stub_sha256=${ATTESTOS_SYSTEMD_ADDON_STUB_SHA256:?missing add-on stub digest}
+systemd_rpm_sha256=${ATTESTOS_SYSTEMD_RPM_SHA256:?missing systemd RPM digest}
+systemd_shared_rpm_sha256=${ATTESTOS_SYSTEMD_SHARED_RPM_SHA256:?missing systemd-shared RPM digest}
+expected_sbsign_sha256=${ATTESTOS_SYSTEMD_SBSIGN_SHA256:?missing systemd-sbsign digest}
+expected_shared_object_sha256=${ATTESTOS_SYSTEMD_SHARED_OBJECT_SHA256:?missing systemd-shared object digest}
 ukify=$(realpath "${ATTESTOS_FEDORA_UKIFY:?missing pinned Fedora ukify}")
 addon_stub=$(realpath "${ATTESTOS_FEDORA_ADDON_STUB:?missing pinned Fedora add-on stub}")
 policy='lockdown=confidentiality module.sig_enforce=1'
@@ -50,11 +56,18 @@ python3 "$ukify" build \
 attestos-addon,1,attestos PCR12 canary,attestos-addon,1,https://github.com/plunder707/attestos" \
     --output="$unsigned"
 
+actual_sbsign_sha256=$(sudo podman run --rm --network=none "$signer_image" \
+    sha256sum /usr/lib/systemd/systemd-sbsign | cut -d' ' -f1)
+[[ "$actual_sbsign_sha256" == "$expected_sbsign_sha256" ]]
+actual_shared_object_sha256=$(sudo podman run --rm --network=none "$signer_image" \
+    sha256sum /usr/lib64/systemd/libsystemd-shared-259.5-1.fc44.so | cut -d' ' -f1)
+[[ "$actual_shared_object_sha256" == "$expected_shared_object_sha256" ]]
+
 sudo podman run \
     --rm \
     --network=none \
     -v "$work:/work:rw,Z" \
-    "$source_reference" \
+    "$signer_image" \
     sh -eu -c '
         signer=$(command -v systemd-sbsign || true)
         if test -z "$signer"; then
@@ -151,6 +164,11 @@ jq -n \
     --arg systemd_nvr "$systemd_nvr" \
     --arg ukify_rpm_sha256 "$ukify_rpm_sha256" \
     --arg boot_rpm_sha256 "$boot_rpm_sha256" \
+    --arg signer_base_reference "$signer_base_reference" \
+    --arg systemd_rpm_sha256 "$systemd_rpm_sha256" \
+    --arg systemd_shared_rpm_sha256 "$systemd_shared_rpm_sha256" \
+    --arg systemd_sbsign_sha256 "$expected_sbsign_sha256" \
+    --arg systemd_shared_object_sha256 "$expected_shared_object_sha256" \
     --arg ukify_sha256 "$expected_ukify_sha256" \
     --arg addon_stub_sha256 "$expected_stub_sha256" \
     --arg unsigned_addon_sha256 "$(sha256sum "$unsigned" | cut -d' ' -f1)" \
@@ -175,8 +193,12 @@ jq -n \
         boot_unsigned_rpm_sha256: $boot_rpm_sha256,
         ukify_sha256: $ukify_sha256,
         addon_stub_sha256: $addon_stub_sha256,
-        signature_tool: "immutable_fedora_systemd-sbsign",
-        signing_image_reference: $source_reference,
+        signature_tool: "pinned_fedora_systemd-sbsign",
+        signer_base_reference: $signer_base_reference,
+        systemd_rpm_sha256: $systemd_rpm_sha256,
+        systemd_shared_rpm_sha256: $systemd_shared_rpm_sha256,
+        systemd_sbsign_sha256: $systemd_sbsign_sha256,
+        systemd_shared_object_sha256: $systemd_shared_object_sha256,
         unsigned_addon_sha256: $unsigned_addon_sha256
       },
       addon: {

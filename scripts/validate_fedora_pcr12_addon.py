@@ -19,7 +19,12 @@ BUILDER = {
     "boot_unsigned_rpm_sha256": "a392ae378b3b6b2d2cee9233c1f3aa2333c8f9f95f65c0b30724840706a29f3f",
     "ukify_sha256": "33c1bc2a0143ac287fe2300ef6177ea4f8e6ccaa71fab8ad44741e2d5a8a7edd",
     "addon_stub_sha256": "23370bb3685f804f5c722648379f3dcbe4474998030b1595ee85690e38350ce5",
-    "signature_tool": "immutable_fedora_systemd-sbsign",
+    "signature_tool": "pinned_fedora_systemd-sbsign",
+    "signer_base_reference": "docker.io/library/fedora@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898",
+    "systemd_rpm_sha256": "c9b1a19777ba6076bcaf6b73e4c296b3bcc2c0b983fa1c62379546f0c13da645",
+    "systemd_shared_rpm_sha256": "78b5b31d5a93d5f254d534c6afa8bc4a9f105d4f39319af36971b984f7308a67",
+    "systemd_sbsign_sha256": "57043bf3c84cb3e57bcf2eca79a25376db4c215f2268067b2a439b854136765a",
+    "systemd_shared_object_sha256": "e7793ddb7e73eba0c1d93d3030b8eee6b71f707d68c8bb61babdaedd3762b388",
 }
 
 
@@ -190,7 +195,6 @@ def evaluate(
         "pinned_matching_addon_builder": (
             builder == {
                 **BUILDER,
-                "signing_image_reference": static.get("source_reference"),
                 "unsigned_addon_sha256": builder.get("unsigned_addon_sha256"),
             }
             and digest(builder.get("unsigned_addon_sha256")) is not None

@@ -51,6 +51,11 @@ env:
   ATTESTOS_SYSTEMD_BOOT_UNSIGNED_RPM_SHA256: a392ae378b3b6b2d2cee9233c1f3aa2333c8f9f95f65c0b30724840706a29f3f
   ATTESTOS_SYSTEMD_UKIFY_SHA256: 33c1bc2a0143ac287fe2300ef6177ea4f8e6ccaa71fab8ad44741e2d5a8a7edd
   ATTESTOS_SYSTEMD_ADDON_STUB_SHA256: 23370bb3685f804f5c722648379f3dcbe4474998030b1595ee85690e38350ce5
+  ATTESTOS_FEDORA_SIGNER_BASE_REFERENCE: docker.io/library/fedora@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
+  ATTESTOS_SYSTEMD_RPM_SHA256: c9b1a19777ba6076bcaf6b73e4c296b3bcc2c0b983fa1c62379546f0c13da645
+  ATTESTOS_SYSTEMD_SHARED_RPM_SHA256: 78b5b31d5a93d5f254d534c6afa8bc4a9f105d4f39319af36971b984f7308a67
+  ATTESTOS_SYSTEMD_SBSIGN_SHA256: 57043bf3c84cb3e57bcf2eca79a25376db4c215f2268067b2a439b854136765a
+  ATTESTOS_SYSTEMD_SHARED_OBJECT_SHA256: e7793ddb7e73eba0c1d93d3030b8eee6b71f707d68c8bb61babdaedd3762b388
 
 jobs:
   positive-control:
@@ -119,14 +124,28 @@ jobs:
           curl --fail --location --silent --show-error \
             "$base/x86_64/systemd-boot-unsigned-259.5-1.fc44.x86_64.rpm" \
             --output "$root/rpms/systemd-boot-unsigned.rpm"
+          curl --fail --location --silent --show-error \
+            "$base/x86_64/systemd-259.5-1.fc44.x86_64.rpm" \
+            --output "$root/rpms/systemd.rpm"
+          curl --fail --location --silent --show-error \
+            "$base/x86_64/systemd-shared-259.5-1.fc44.x86_64.rpm" \
+            --output "$root/rpms/systemd-shared.rpm"
           echo "$ATTESTOS_SYSTEMD_UKIFY_RPM_SHA256  $root/rpms/systemd-ukify.rpm" \
             | sha256sum --check --strict
           echo "$ATTESTOS_SYSTEMD_BOOT_UNSIGNED_RPM_SHA256  $root/rpms/systemd-boot-unsigned.rpm" \
+            | sha256sum --check --strict
+          echo "$ATTESTOS_SYSTEMD_RPM_SHA256  $root/rpms/systemd.rpm" \
+            | sha256sum --check --strict
+          echo "$ATTESTOS_SYSTEMD_SHARED_RPM_SHA256  $root/rpms/systemd-shared.rpm" \
             | sha256sum --check --strict
           (
             cd "$root/root"
             rpm2cpio ../rpms/systemd-ukify.rpm | cpio -idm --quiet
             rpm2cpio ../rpms/systemd-boot-unsigned.rpm | cpio -idm --quiet
+            rpm2cpio ../rpms/systemd.rpm \
+              | cpio -idm --quiet './usr/lib/systemd/systemd-sbsign'
+            rpm2cpio ../rpms/systemd-shared.rpm \
+              | cpio -idm --quiet './usr/lib64/systemd/libsystemd-shared-259.5-1.fc44.so'
           )
           ukify="$root/root/usr/bin/ukify"
           stub="$root/root/usr/lib/systemd/boot/efi/addonx64.efi.stub"
@@ -135,8 +154,60 @@ jobs:
           echo "$ATTESTOS_SYSTEMD_UKIFY_SHA256  $ukify" | sha256sum --check --strict
           echo "$ATTESTOS_SYSTEMD_ADDON_STUB_SHA256  $stub" | sha256sum --check --strict
           python3 "$ukify" --version
+          signer_image="localhost/attestos-fedora-addon-signer:${GITHUB_SHA}"
+          sudo podman pull "$ATTESTOS_FEDORA_SIGNER_BASE_REFERENCE"
+          sudo podman build \
+            --pull=never \
+            --build-arg "FEDORA_SIGNER_BASE=$ATTESTOS_FEDORA_SIGNER_BASE_REFERENCE" \
+            --file canary/fedora-sealed/Containerfile.addon-signer \
+            --tag "$signer_image" \
+            "$root/root"
+          signer_sha256=$(sudo podman run --rm --network=none "$signer_image" \
+            sha256sum /usr/lib/systemd/systemd-sbsign | cut -d' ' -f1)
+          [[ "$signer_sha256" == "$ATTESTOS_SYSTEMD_SBSIGN_SHA256" ]]
+          shared_sha256=$(sudo podman run --rm --network=none "$signer_image" \
+            sha256sum /usr/lib64/systemd/libsystemd-shared-259.5-1.fc44.so \
+            | cut -d' ' -f1)
+          [[ "$shared_sha256" == "$ATTESTOS_SYSTEMD_SHARED_OBJECT_SHA256" ]]
+          sudo podman run --rm --network=none "$signer_image" \
+            /usr/lib/systemd/systemd-sbsign --version \
+            | tee "$root/signer-version.txt"
+          grep -F 'systemd 259 (259.5-1.fc44)' "$root/signer-version.txt"
+
+          smoke="$root/signer-smoke"
+          mkdir "$smoke"
+          openssl req -new -newkey rsa:2048 -nodes -x509 -sha256 -days 1 \
+            -subj '/CN=attestos signer preflight/' \
+            -keyout "$smoke/addon.key" \
+            -out "$smoke/addon.pem" >/dev/null 2>&1
+          python3 "$ukify" build \
+            --stub="$stub" \
+            --cmdline='lockdown=confidentiality module.sig_enforce=1' \
+            --sbat="sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md
+          attestos-addon,1,attestos signer preflight,attestos-addon,1,https://github.com/plunder707/attestos" \
+            --output="$smoke/unsigned.addon.efi"
+          sudo podman run --rm --network=none \
+            -v "$smoke:/work:rw,Z" \
+            "$signer_image" \
+            /usr/lib/systemd/systemd-sbsign sign \
+              --private-key=/work/addon.key \
+              --certificate=/work/addon.pem \
+              --output=/work/signed.addon.efi \
+              /work/unsigned.addon.efi
+          sudo chown -R "$(id -u):$(id -g)" "$smoke"
+          sbverify --cert "$smoke/addon.pem" "$smoke/signed.addon.efi"
+          python3 scripts/mutate_pe_cmdline.py \
+            --input "$smoke/signed.addon.efi" \
+            --output "$smoke/tampered.addon.efi" \
+            --receipt "$smoke/mutation.json"
+          if sbverify --cert "$smoke/addon.pem" "$smoke/tampered.addon.efi"; then
+            echo 'tampered signer preflight add-on still verifies' >&2
+            exit 1
+          fi
+          rm -rf "$smoke"
           echo "ATTESTOS_FEDORA_UKIFY=$ukify" >> "$GITHUB_ENV"
           echo "ATTESTOS_FEDORA_ADDON_STUB=$stub" >> "$GITHUB_ENV"
+          echo "ATTESTOS_FEDORA_SIGNER_IMAGE=$signer_image" >> "$GITHUB_ENV"
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2

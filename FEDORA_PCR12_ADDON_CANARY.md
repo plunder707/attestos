@@ -16,9 +16,11 @@ the add-on parameters into PCR 12. `StubPcrKernelParameters` is set to `12`
 only when that measurement completes.
 
 The add-on is assembled with the digest-pinned Fedora v259.5 `ukify` and stub,
-then signed by `systemd-sbsign` inside the same immutable Fedora image used by
-the experiment. A complete, in-bounds PE certificate table is required before
-the signed artifact or its byte-bounded tamper negative can enter any boot arm.
+then signed by a SHA-pinned Fedora v259.5 `systemd-sbsign` inside a disposable
+signer image built from a digest-pinned Fedora base. The signer runs without
+network access while the private key is mounted. A complete, in-bounds PE
+certificate table is required before the signed artifact or its byte-bounded
+tamper negative can enter any boot arm.
 
 ## Frozen Arms
 
@@ -42,6 +44,14 @@ The add-on is authored with Fedora's exact `systemd-ukify-259.5-1.fc44` and
 matching `systemd-boot-unsigned-259.5-1.fc44` add-on stub. Both RPMs and both
 extracted files are SHA-256 pinned before key generation. This avoids assuming
 that the immutable runtime image also contains build tooling.
+
+The signer is a separate toolchain boundary because the immutable Silverblue
+runtime's signer produced a truncated small-PE output during development even
+though it successfully signed the full UKI control. Its Fedora base, exact
+`systemd` and `systemd-shared` RPMs, and `systemd-sbsign` binary are all pinned
+and recorded. The signed add-on must also survive strict PE parsing, static
+signature verification, firmware admission, and a post-signature tamper
+negative; signer exit status alone is never evidence of a valid artifact.
 
 ## Admission Gates
 
