@@ -1,175 +1,289 @@
 #!/usr/bin/python3
-"""attestos-agent: produce a TPM quote for a verifier's challenge.
+"""Socket-activated TPM mechanics agent for attestos.tpm/v1.
 
-Reads a JSON challenge on stdin, writes a JSON attestation on stdout. Meant to
-be socket-activated so nothing is running while nobody is playing.
-
-    in:  {"nonce": "<hex>", "channel_id": "<tls exporter value>"}
-    out: {"quote_b64": ..., "signature_b64": ..., "pcrs": {...},
-          "event_log_b64": ..., "ak_pub_pem": ..., "ak_cert_b64": ...,
-          "image_digest": ...}
-
-WHAT THIS DOES NOT DO
-  It does not decide anything. It gathers evidence and hands it over. Every
-  judgement belongs to the verifier, which runs on the vendor's server where
-  the player cannot reach it. An agent that reported its own verdict would be
-  asking the attacker's machine whether the attacker's machine is honest.
-
-THE NONCE IS NOT USED RAW
-  The value signed into the quote is H(nonce || channel_id), binding the
-  attestation to the TLS session that requested it. Without that binding a
-  cheater forwards the challenge to a clean machine on the same desk and
-  relays back a perfectly valid quote. Freshness is not origin.
-
-THE EVENT LOG MATTERS
-  PCR values are opaque hashes. The TCG event log is what lets a verifier
-  replay the measurements and see WHAT was measured rather than only that a
-  hash matched. Sending PCRs without the log gives the verifier a number it
-  cannot interpret.
+The agent gathers raw evidence. It never produces a trust verdict.
 """
 
 from __future__ import annotations
 
 import base64
-import hashlib
+import binascii
 import json
 import os
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
+from typing import Mapping
 
-# Must match the verifier's required set. A quote that omits a PCR proves
-# nothing about it, so the verifier refuses a short selection; there is no
-# point producing one.
+PROTOCOL = "attestos.tpm/v1"
 PCRS = (7, 11, 12, 15)
 BANK = "sha256"
-
-EVENT_LOG = "/sys/kernel/security/tpm0/binary_bios_measurements"
-IMAGE_DIGEST = "/usr/lib/attestos/image-digest"
-
-# Persistent handles. The AK is created once at first boot by
-# attestos-provision and persisted, because creating it per request is slow
-# and would change the key the verifier has come to recognise.
+EK_HANDLE = "0x81010001"
 AK_HANDLE = "0x81010002"
-AK_PUB = "/var/lib/attestos/ak.pem"
-AK_CERT = "/var/lib/attestos/ak.crt"
+STATE = Path(os.environ.get("ATTESTOS_STATE_DIR", "/var/lib/attestos"))
+AK_PUB = STATE / "ak.pem"
+AK_NAME = STATE / "ak.name"
+EK_PUB = STATE / "ek.pem"
+EK_CERT = STATE / "ek.crt"
+FIRMWARE_LOG = Path("/sys/kernel/security/tpm0/binary_bios_measurements")
+SYSTEMD_LOG = Path("/run/log/systemd/tpm2-measure.log")
+MAX_INPUT_BYTES = 8 * 1024 * 1024
+MAX_LOG_BYTES = 6 * 1024 * 1024
 
 
 class AgentError(RuntimeError):
     pass
 
 
-def run(*args: str, **kw) -> bytes:
-    proc = subprocess.run(args, capture_output=True, **kw)
+def run(*args: str, timeout: int = 20) -> bytes:
+    proc = subprocess.run(
+        args,
+        capture_output=True,
+        timeout=timeout,
+        env={**os.environ, "LC_ALL": "C"},
+    )
     if proc.returncode != 0:
+        detail = proc.stderr.decode("utf-8", errors="replace").strip()
         raise AgentError(
-            f"{args[0]} failed ({proc.returncode}): "
-            f"{proc.stderr.decode(errors='replace').strip()}")
+            f"{args[0]} failed ({proc.returncode})" +
+            (f": {detail[:240]}" if detail else ""))
     return proc.stdout
 
 
-def bind_nonce(nonce: str, channel_id: str) -> str:
-    """H(nonce || channel_id). Identical construction to the verifier's."""
-    return hashlib.sha256(f"{nonce}|{channel_id}".encode()).hexdigest()
+def b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
 
 
-def read_pcrs() -> dict[int, str]:
-    out = run("tpm2_pcrread", f"{BANK}:{','.join(str(p) for p in PCRS)}")
-    values: dict[int, str] = {}
-    for line in out.decode().splitlines():
-        line = line.strip()
-        if ":" not in line or not line.split(":")[0].strip().isdigit():
-            continue
-        index, raw = line.split(":", 1)
-        values[int(index)] = raw.strip().removeprefix("0x").lower()
-    missing = [p for p in PCRS if p not in values]
-    if missing:
-        raise AgentError(f"tpm2_pcrread returned no value for PCRs {missing}")
-    return values
+def decode_b64(value: object, field: str, exact_bytes: int | None = None) -> bytes:
+    if not isinstance(value, str) or not value:
+        raise AgentError(f"{field} must be non-empty base64")
+    try:
+        data = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise AgentError(f"{field} is not strict base64") from exc
+    if exact_bytes is not None and len(data) != exact_bytes:
+        raise AgentError(f"{field} must decode to {exact_bytes} bytes")
+    if len(data) > MAX_INPUT_BYTES:
+        raise AgentError(f"{field} exceeds the input limit")
+    return data
 
 
-def quote(bound_nonce: str) -> tuple[bytes, bytes]:
-    """Returns (attestation blob, signature). Both are raw TPM structures.
+def exact(message: object, required: set[str], kind: str) -> Mapping:
+    if not isinstance(message, Mapping):
+        raise AgentError("request must be a JSON object")
+    keys = set(message)
+    if keys != required:
+        missing = sorted(required - keys)
+        extra = sorted(keys - required)
+        raise AgentError(
+            f"{kind} fields mismatch: missing={missing}, extra={extra}")
+    if message["protocol"] != PROTOCOL or message["kind"] != kind:
+        raise AgentError(f"expected {PROTOCOL} {kind}")
+    request_id = message["request_id"]
+    if (not isinstance(request_id, str) or len(request_id) != 32 or
+            any(c not in "0123456789abcdef" for c in request_id)):
+        raise AgentError("request_id must be 32 lowercase hex characters")
+    return message
 
-    The blob is what the TPM signed. It carries the PCR digest, not the PCR
-    values, which is why the verifier recomputes rather than trusts what we
-    send alongside.
-    """
-    with tempfile.TemporaryDirectory() as work:
-        msg = os.path.join(work, "quote.msg")
-        sig = os.path.join(work, "quote.sig")
-        run("tpm2_quote",
+
+def read_required(path: Path, max_bytes: int = 64 * 1024) -> bytes:
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise AgentError(f"required evidence {path} is unavailable") from exc
+    if not data or len(data) > max_bytes:
+        raise AgentError(f"required evidence {path} has an invalid size")
+    return data
+
+
+def read_optional_log(path: Path) -> bytes | None:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if len(data) > MAX_LOG_BYTES:
+        raise AgentError(f"event log {path} exceeds {MAX_LOG_BYTES} bytes")
+    return data or None
+
+
+def identity(message: object) -> dict:
+    challenge = exact(message, {
+        "protocol", "kind", "request_id", "device_class",
+    }, "identity_challenge")
+    device_class = challenge["device_class"]
+    if device_class not in {"hardware", "emulator"}:
+        raise AgentError("device_class must be hardware or emulator")
+    certificate = EK_CERT.read_bytes() if EK_CERT.is_file() else None
+    return {
+        "protocol": PROTOCOL,
+        "kind": "enrollment_request",
+        "request_id": challenge["request_id"],
+        "device_class": device_class,
+        "ak": {
+            "public_pem": read_required(AK_PUB).decode("ascii"),
+            "name_b64": b64(read_required(AK_NAME, 128)),
+            "key_algorithm": "rsa-2048",
+            "signing_algorithm": "rsassa-sha256",
+        },
+        "ek": {
+            "public_pem": read_required(EK_PUB).decode("ascii"),
+            "key_algorithm": "rsa-2048",
+            "certificate_der_b64": b64(certificate) if certificate else None,
+        },
+    }
+
+
+def activate(message: object) -> dict:
+    challenge = exact(message, {
+        "protocol", "kind", "request_id", "enrollment_id",
+        "credential_blob_b64",
+    }, "activation_challenge")
+    blob = decode_b64(challenge["credential_blob_b64"], "credential_blob_b64")
+    with tempfile.TemporaryDirectory(prefix="attestos-activate-") as tmp:
+        root = Path(tmp)
+        blob_path = root / "credential.blob"
+        secret_path = root / "secret.bin"
+        session_path = root / "policy.session"
+        blob_path.write_bytes(blob)
+        blob_path.chmod(0o600)
+        try:
+            run("tpm2_startauthsession", "--policy-session", "-S", str(session_path))
+            run("tpm2_policysecret", "-S", str(session_path), "-c", "e")
+            run(
+                "tpm2_activatecredential",
+                "-Q",
+                "-c", AK_HANDLE,
+                "-C", EK_HANDLE,
+                "-i", str(blob_path),
+                "-o", str(secret_path),
+                "-P", f"session:{session_path}",
+            )
+            secret = read_required(secret_path, 32)
+        finally:
+            if session_path.exists():
+                subprocess.run(
+                    ["tpm2_flushcontext", str(session_path)],
+                    capture_output=True,
+                    check=False,
+                )
+    if len(secret) != 32:
+        raise AgentError("ActivateCredential returned an unexpected secret size")
+    return {
+        "protocol": PROTOCOL,
+        "kind": "activation_response",
+        "request_id": challenge["request_id"],
+        "enrollment_id": challenge["enrollment_id"],
+        "secret_b64": b64(secret),
+    }
+
+
+def deployment_claim() -> dict:
+    unavailable = {
+        "source": "unavailable",
+        "image_reference": None,
+        "image_digest": None,
+        "ostree_checksum": None,
+    }
+    try:
+        status = json.loads(run("bootc", "status", "--json", timeout=10))
+        booted = status.get("status", {}).get("booted") or {}
+        image = booted.get("image") or {}
+        image_identity = image.get("image") or {}
+        reference = image_identity.get("image")
+        digest = image.get("imageDigest")
+        checksum = (booted.get("ostree") or {}).get("checksum")
+        if not any((reference, digest, checksum)):
+            return unavailable
+        return {
+            "source": "bootc_status_v1",
+            "image_reference": reference,
+            "image_digest": digest,
+            "ostree_checksum": checksum,
+        }
+    except (AgentError, json.JSONDecodeError, AttributeError):
+        return unavailable
+
+
+def quote(message: object) -> dict:
+    challenge = exact(message, {
+        "protocol", "kind", "request_id", "enrollment_id",
+        "qualifying_data_b64", "binding_mode",
+    }, "quote_challenge")
+    if challenge["binding_mode"] != "nonce_only":
+        raise AgentError("v1 supports only nonce_only binding")
+    qualifying = decode_b64(
+        challenge["qualifying_data_b64"], "qualifying_data_b64", 32)
+    with tempfile.TemporaryDirectory(prefix="attestos-quote-") as tmp:
+        root = Path(tmp)
+        msg = root / "quote.msg"
+        sig = root / "quote.sig"
+        pcrs = root / "quote.pcrs"
+        run(
+            "tpm2_quote",
+            "-Q",
             "-c", AK_HANDLE,
             "-l", f"{BANK}:{','.join(str(p) for p in PCRS)}",
-            "-q", bound_nonce,
-            "-m", msg,
-            "-s", sig,
-            "-g", "sha256")
-        with open(msg, "rb") as fh:
-            attestation = fh.read()
-        with open(sig, "rb") as fh:
-            signature = fh.read()
-    return attestation, signature
+            "-q", qualifying.hex(),
+            "-m", str(msg),
+            "-s", str(sig),
+            "-o", str(pcrs),
+            "-g", "sha256",
+        )
+        raw_message = read_required(msg, 64 * 1024)
+        raw_signature = read_required(sig, 64 * 1024)
+        raw_pcrs = read_required(pcrs, 64 * 1024)
 
-
-def read_file(path: str, optional: bool = False) -> bytes | None:
-    try:
-        with open(path, "rb") as fh:
-            return fh.read()
-    except OSError:
-        if optional:
-            return None
-        raise AgentError(
-            f"{path} is unreadable. Without it the verifier cannot interpret "
-            "the PCR values it is being sent.")
-
-
-def attest(challenge: dict) -> dict:
-    nonce = challenge.get("nonce")
-    channel_id = challenge.get("channel_id")
-    if not nonce or not channel_id:
-        raise AgentError(
-            "challenge needs both nonce and channel_id; an unbound quote can "
-            "be relayed from another machine")
-
-    bound = bind_nonce(nonce, channel_id)
-    attestation, signature = quote(bound)
-    event_log = read_file(EVENT_LOG)
-    ak_pub = read_file(AK_PUB)
-    ak_cert = read_file(AK_CERT, optional=True)
-    digest = read_file(IMAGE_DIGEST, optional=True)
-
-    def b64(data: bytes | None) -> str | None:
-        return base64.b64encode(data).decode() if data else None
-
+    logs = []
+    for source, path in (
+        ("tcg_firmware", FIRMWARE_LOG),
+        ("systemd_tpm2_measure", SYSTEMD_LOG),
+    ):
+        data = read_optional_log(path)
+        if data:
+            logs.append({"source": source, "data_b64": b64(data)})
     return {
-        "quote_b64": b64(attestation),
-        "signature_b64": b64(signature),
-        "pcrs": {str(k): v for k, v in read_pcrs().items()},
-        "event_log_b64": b64(event_log),
-        "ak_pub_pem": ak_pub.decode() if ak_pub else None,
-        "ak_cert_b64": b64(ak_cert),
-        "image_digest": digest.decode().strip() if digest else None,
-        "pcr_selection": list(PCRS),
-        "bank": BANK,
+        "protocol": PROTOCOL,
+        "kind": "quote_response",
+        "request_id": challenge["request_id"],
+        "enrollment_id": challenge["enrollment_id"],
+        "binding_mode": "nonce_only",
+        "qualifying_data_b64": challenge["qualifying_data_b64"],
+        "quote": {
+            "message_b64": b64(raw_message),
+            "signature_b64": b64(raw_signature),
+            "pcrs_b64": b64(raw_pcrs),
+            "ak_public_pem": read_required(AK_PUB).decode("ascii"),
+            "hash_algorithm": "sha256",
+            "signing_algorithm": "rsassa-sha256",
+            "pcr_selection": {"sha256": list(PCRS)},
+        },
+        "event_logs": logs,
+        "deployment_claim": deployment_claim(),
     }
 
 
 def main() -> int:
     try:
-        challenge = json.load(sys.stdin)
-    except json.JSONDecodeError as exc:
-        json.dump({"error": f"malformed challenge: {exc}"}, sys.stdout)
-        return 2
-    try:
-        json.dump(attest(challenge), sys.stdout)
-    except AgentError as exc:
-        # Report the failure rather than a partial attestation. A verifier
-        # that receives half a quote must not be able to mistake it for a
-        # whole one.
+        raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
+        if len(raw) > MAX_INPUT_BYTES:
+            raise AgentError("request exceeds the input limit")
+        message = json.loads(raw)
+        if not isinstance(message, Mapping):
+            raise AgentError("request must be a JSON object")
+        handlers = {
+            "identity_challenge": identity,
+            "activation_challenge": activate,
+            "quote_challenge": quote,
+        }
+        handler = handlers.get(message.get("kind"))
+        if handler is None:
+            raise AgentError("unsupported message kind")
+        json.dump(handler(message), sys.stdout, sort_keys=True)
+        return 0
+    except (AgentError, json.JSONDecodeError) as exc:
         json.dump({"error": str(exc)}, sys.stdout)
         return 1
-    return 0
 
 
 if __name__ == "__main__":
