@@ -408,6 +408,21 @@ def test_tamper_negative_changes_exact_signed_uki_in_throwaway_overlay():
     assert "--tamper fedora-output/compat-tamper/tamper-admission.json" in workflow
 
 
+@pytest.mark.parametrize(
+    "script",
+    [
+        "scripts/prepare_fedora_sealed_compat_control.sh",
+        "scripts/tamper_fedora_sealed_uki.sh",
+    ],
+)
+def test_disk_mutators_retry_only_the_post_disconnect_lock_race(script):
+    source = (ROOT / script).read_text()
+    assert "sudo udevadm settle" in source
+    assert "for _ in $(seq 1 50)" in source
+    assert 'Failed to get shared "write" lock' in source
+    assert "qcow2 write lock did not clear after NBD disconnect" in source
+
+
 def test_cli_enforcement_writes_failure_receipt(tmp_path):
     static = static_evidence()
     guest = guest_evidence()

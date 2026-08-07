@@ -159,6 +159,24 @@ jq -n \
 sudo umount "$mount_root"
 sudo qemu-nbd --disconnect "$nbd"
 nbd=""
-qemu-img check "$disk"
+sudo udevadm settle
+checked=false
+for _ in $(seq 1 50); do
+    if check_output=$(qemu-img check "$disk" 2>&1); then
+        printf '%s\n' "$check_output"
+        checked=true
+        break
+    fi
+    if ! grep -Fq 'Failed to get shared "write" lock' <<<"$check_output"; then
+        printf '%s\n' "$check_output" >&2
+        exit 1
+    fi
+    sleep 0.2
+done
+[[ "$checked" == true ]] || {
+    printf '%s\n' "$check_output" >&2
+    echo "qcow2 write lock did not clear after NBD disconnect" >&2
+    exit 1
+}
 sha256sum "$disk" > "$output/disk.sha256"
 sudo chown -R "$(id -u):$(id -g)" "$output" "$disk"
