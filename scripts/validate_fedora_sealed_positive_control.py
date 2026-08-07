@@ -11,6 +11,7 @@ from pathlib import Path
 
 FORMAT = "attestos.fedora_sealed_positive_control/v1"
 ZERO_SHA256 = "0" * 64
+BCVK_V010_SHA256 = "444e54422cac41447d2a95cc5c64794070b9eb6e42ef0c9d1f7582e29e94e341"
 TRUST_KEYS = ("manufacturer_trusted", "policy_trusted", "production_trusted")
 
 
@@ -53,6 +54,7 @@ def evaluate(static: dict, guest: dict, provenance: dict) -> dict:
     provenance_reference = provenance.get("image_reference")
     installer_reference = static.get("installer_reference")
     provenance_installer = provenance.get("installer_reference")
+    disk_builder = provenance.get("disk_builder", {})
 
     gates = {
         "immutable_source_join": (
@@ -64,6 +66,11 @@ def evaluate(static: dict, guest: dict, provenance: dict) -> dict:
             isinstance(installer_reference, str) and
             installer_reference == provenance_installer and
             "@sha256:" in installer_reference
+        ),
+        "pinned_disk_builder": (
+            disk_builder.get("name") == "bcvk" and
+            disk_builder.get("version") == "0.10.0" and
+            disk_builder.get("asset_sha256") == BCVK_V010_SHA256
         ),
         "exactly_one_static_uki": static.get("esp", {}).get("uki_count") == 1,
         "static_uki_signature_verified": static_uki.get("signature_verified") is True,
