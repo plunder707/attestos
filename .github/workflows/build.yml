@@ -6,11 +6,17 @@ on:
       - main
   schedule:
     - cron: '05 10 * * *'  # 10:05am UTC everyday
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - '**/README.md'
+  # Publishing on push to main is DISABLED until a build has gone green.
+  # The workflow pushes and signs whenever the event is not a pull_request
+  # and the ref is the default branch, so leaving this enabled would publish
+  # an image whose central measurement is known not to work yet. Pull
+  # requests build without pushing, which is the test we want first.
+  #
+  # push:
+  #   branches:
+  #     - main
+  #   paths-ignore:
+  #     - '**/README.md'
   workflow_dispatch:
 
 env:
