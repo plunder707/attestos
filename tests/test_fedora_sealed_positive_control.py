@@ -608,9 +608,16 @@ def test_probe_unit_is_explicitly_outside_sealed_usr_and_non_authoritative():
     assert builder.index("scripts/inspect_fedora_sealed_disk.py") < builder.index(
         'probe_dir="$deployment_root/etc/attestos-positive-control"'
     )
-    assert "expected exactly one OSTree deployment" in builder
+    assert "expected exactly one composefs token in the inspected UKI" in builder
+    assert '[[ "$deployment_id" =~ ^[0-9a-f]{128}$ ]]' in builder
+    assert 'deployment_root="$mount_root/state/deploy/$deployment_id"' in builder
+    assert 'origin="$deployment_root/$deployment_id.origin"' in builder
+    assert "matching composefs deployment has no writable etc state" in builder
+    assert "matching composefs deployment has no origin record" in builder
     assert 'unit_dir="$deployment_root/etc/systemd/system"' in builder
-    assert "selected_ostree_deployment_etc_outside_sealed_usr" in builder
+    assert "matched_composefs_state_etc_outside_sealed_usr" in builder
+    assert "composefs_digest: $composefs_digest" in builder
+    assert "origin_sha256: $origin_sha256" in builder
     assert "affects_static_uki_identity: false" in builder
     assert "manufacturer_trusted: false" in builder
     assert "policy_trusted: false" in builder

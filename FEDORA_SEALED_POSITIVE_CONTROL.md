@@ -122,9 +122,10 @@ initramfs unlock on TCG. The QMP console driver is observation-only and records
 framebuffers; it never types into the guest or supplies evidence authority.
 
 The evidence probe is carried on a second block device. A tracked one-shot unit
-and the probe script are installed in the selected OSTree deployment's
-machine-local mutable `/etc` only after static UKI inspection; they never enter
-the sealed `/usr` tree or alter
+and the probe script are installed in the machine-local mutable
+`/state/deploy/<composefs-digest>/etc` selected by the exact digest embedded in
+the statically inspected UKI. Installation happens only after static UKI
+inspection; the probe never enters the sealed `/usr` tree or alters
 the signed UKI whose identity is measured into PCR 11. The unit reads EFI
 variables, hashes the firmware-identified UKI, reads PCR 11 directly from the
 guest TPM device, writes one receipt back to the probe disk, and powers off.

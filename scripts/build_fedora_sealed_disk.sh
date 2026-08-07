@@ -109,21 +109,38 @@ sudo python3 scripts/inspect_fedora_sealed_disk.py \
     --installer-reference "$installer_reference" \
     --output "$output/static-inspection.json"
 
-# The physical partition root is not the root systemd enters. OSTree remaps the
-# selected deployment at boot, including that deployment's writable /etc.
-# Require the single fresh-install deployment explicitly so a probe can never be
-# placed in an inactive deployment or the physical root by accident.
-deployment_roots=()
-while IFS= read -r candidate; do
-    deployment_roots+=("$candidate")
-done < <(sudo find "$mount_root/ostree/deploy" \
-    -mindepth 3 -maxdepth 3 -type d -path '*/deploy/*.*' -print | sort)
-[[ ${#deployment_roots[@]} -eq 1 ]] || {
-    echo "expected exactly one OSTree deployment, found ${#deployment_roots[@]}" >&2
+# The composefs backend does not create an OSTree deployment. It bind-mounts
+# writable state from /state/deploy/<composefs-digest>/etc over the sealed root.
+# Derive that digest from the inspected UKI, then require the exact matching
+# state directory and origin record so an unrelated deployment cannot receive
+# the probe.
+composefs_tokens=()
+while IFS= read -r token; do
+    composefs_tokens+=("$token")
+done < <(jq -r \
+    '.uki.embedded_cmdline | split(" ") | map(select(startswith("composefs="))) | .[]' \
+    "$output/static-inspection.json")
+[[ ${#composefs_tokens[@]} -eq 1 ]] || {
+    echo "expected exactly one composefs token in the inspected UKI, found ${#composefs_tokens[@]}" >&2
     exit 1
 }
-deployment_root=${deployment_roots[0]}
+deployment_id=${composefs_tokens[0]#composefs=}
+[[ "$deployment_id" =~ ^[0-9a-f]{128}$ ]] || {
+    echo "inspected UKI contains a non-canonical composefs digest" >&2
+    exit 1
+}
+deployment_root="$mount_root/state/deploy/$deployment_id"
+origin="$deployment_root/$deployment_id.origin"
+[[ -d "$deployment_root/etc" ]] || {
+    echo "matching composefs deployment has no writable etc state: $deployment_id" >&2
+    exit 1
+}
+[[ -f "$origin" ]] || {
+    echo "matching composefs deployment has no origin record: $deployment_id" >&2
+    exit 1
+}
 deployment_relative=${deployment_root#"$mount_root"}
+origin_sha256=$(sudo sha256sum "$origin" | cut -d' ' -f1)
 
 # The positive-control probe is machine-local test instrumentation. It is
 # installed only after the signed UKI has been inspected and never enters the
@@ -144,10 +161,14 @@ jq -n \
     --arg probe_sha256 "$(sha256sum scripts/fedora_sealed_guest_probe.py | cut -d' ' -f1)" \
     --arg unit_sha256 "$(sha256sum canary/fedora-sealed/fedora-sealed-positive-control.service | cut -d' ' -f1)" \
     --arg deployment_root "$deployment_relative" \
+    --arg composefs_digest "$deployment_id" \
+    --arg origin_sha256 "$origin_sha256" \
     '{
       format: "attestos.fedora_sealed_probe_install/v1",
-      location: "selected_ostree_deployment_etc_outside_sealed_usr",
+      location: "matched_composefs_state_etc_outside_sealed_usr",
       deployment_root: $deployment_root,
+      composefs_digest: $composefs_digest,
+      origin_sha256: $origin_sha256,
       probe_sha256: $probe_sha256,
       unit_sha256: $unit_sha256,
       affects_static_uki_identity: false,
