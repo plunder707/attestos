@@ -17,7 +17,7 @@ message kinds are:
 Implementations must report these stages independently:
 
 - `quote_valid`: `tpm2_checkquote` verified the raw TPM message, signature,
-  qualifying data, and serialized PCR values.
+  qualifying data, and ordered PCR digest values.
 - `same_tpm_ak`: credential activation proved that the named AK is available
   under the EK used by the enrollment challenge.
 - `manufacturer_trusted`: the EK certificate and public key were validated
@@ -40,8 +40,11 @@ Version 1 supports one profile deliberately:
 - 32-byte verifier-generated qualifying data
 
 All binary values use strict RFC 4648 base64. Unknown fields and unsupported
-algorithms fail closed. The raw `TPMS_ATTEST`, TPM signature, and serialized
-PCR output from `tpm2_quote` are transported without reinterpretation.
+algorithms fail closed. The raw `TPMS_ATTEST` and TPM signature are preserved.
+`pcrs_b64` is exactly 128 bytes: four ordered SHA-256 digest values captured
+by the same `tpm2_quote` command. It carries no client-controlled selection
+header. The verifier reads the selection from signed TPMS_ATTEST and supplies
+the fixed `sha256:7,11,12,15` interpretation to its checker.
 
 ## Enrollment
 

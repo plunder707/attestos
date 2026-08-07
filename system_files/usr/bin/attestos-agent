@@ -228,6 +228,7 @@ def quote(message: object) -> dict:
             "-m", str(msg),
             "-s", str(sig),
             "-o", str(pcrs),
+            "-F", "values",
             "-g", "sha256",
         )
         raw_message = read_required(msg, 64 * 1024)

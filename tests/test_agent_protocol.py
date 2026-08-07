@@ -127,6 +127,7 @@ def test_quote_captures_pcrs_in_same_tpm_command(agent, monkeypatch, tmp_path):
     quote_commands = [c for c in commands if c[0] == "tpm2_quote"]
     assert len(quote_commands) == 1
     assert "-o" in quote_commands[0]
+    assert quote_commands[0][quote_commands[0].index("-F") + 1] == "values"
     assert not any(c[0] == "tpm2_pcrread" for c in commands)
     assert response["deployment_claim"]["image_digest"] == "sha256:" + "d" * 64
     assert response["event_logs"][0]["source"] == "tcg_firmware"
