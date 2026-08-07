@@ -4,6 +4,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github" / "workflows" / "uki-base-admission-canary.yml"
 DISK_LAYOUT = (
     ROOT
     / "system_files"
@@ -36,8 +37,12 @@ def test_qcow2_layout_has_bounded_boot_partitions_and_root_capacity():
     assert mounted["/boot/efi"]["payload"]["type"] == "vfat"
     assert mounted["/boot"]["payload"]["type"] == "ext4"
 
-    root = partitions[-1]
-    assert root["payload_type"] == "btrfs"
-    assert root["payload"]["subvolumes"] == [
-        {"name": "root", "mountpoint": "/"}
-    ]
+    root = mounted["/"]
+    assert root["payload"]["type"] == "ext4"
+    assert root["payload"]["label"] == "root"
+
+
+def test_bluefin_builder_uses_the_layout_root_filesystem():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "--rootfs=ext4" in workflow
+    assert "--rootfs=btrfs" not in workflow

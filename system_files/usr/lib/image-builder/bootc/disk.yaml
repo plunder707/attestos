@@ -27,8 +27,11 @@ partition_table:
         fstab_passno: 0
     - size: "20 GiB"
       type: "4f68bce3-e8cd-4db1-96e7-fbcaf984b709"
-      payload_type: "btrfs"
+      payload_type: "filesystem"
       payload:
-        subvolumes:
-          - name: "root"
-            mountpoint: "/"
+        type: "ext4"
+        mountpoint: "/"
+        label: "root"
+        fstab_options: "defaults"
+        fstab_freq: 0
+        fstab_passno: 0

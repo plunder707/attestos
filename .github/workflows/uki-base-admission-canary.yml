@@ -188,7 +188,7 @@ jobs:
             "$ATTESTOS_BUILDER_IMAGE" \
             --type qcow2 \
             --use-librepo=True \
-            --rootfs=btrfs \
+            --rootfs=ext4 \
             localhost/attestos:uki-candidate
           test -s output/qcow2/disk.qcow2
           sudo chown -R "$(id -u):$(id -g)" output
