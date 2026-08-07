@@ -10,6 +10,7 @@ fi
 disk=$(realpath "$1")
 output=$(realpath -m "$2")
 source_vars=${ATTESTOS_FEDORA_OVMF_VARS:?missing converted Fedora OVMF variable store}
+code=${ATTESTOS_FEDORA_OVMF_CODE:?missing OVMF code paired with variable template}
 mkdir -p "$output"
 
 for command in debugfs mke2fs qemu-img qemu-system-x86_64 swtpm; do
@@ -19,13 +20,7 @@ for command in debugfs mke2fs qemu-img qemu-system-x86_64 swtpm; do
     }
 done
 
-code=""
-for candidate in \
-    /usr/share/OVMF/OVMF_CODE_4M.secboot.fd \
-    /usr/share/OVMF/OVMF_CODE.secboot.fd; do
-    [[ -f "$candidate" ]] && code="$candidate" && break
-done
-[[ -n "$code" ]] || { echo "Secure Boot OVMF code was not found" >&2; exit 1; }
+[[ -f "$code" ]] || { echo "paired Secure Boot OVMF code was not found" >&2; exit 1; }
 
 state="$output/swtpm-state"
 tpm_socket="$output/swtpm.sock"

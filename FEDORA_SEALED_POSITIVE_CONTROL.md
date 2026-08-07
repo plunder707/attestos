@@ -32,8 +32,12 @@ without the loaded-path identity join cannot pass.
 - Fedora 44 Silverblue sealed image:
   `quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d0e34c45cb33adbeee3ada65b33addbb30297eb938bdb7af35c67b63b7028eb7`
 - Installer image: the same immutable Silverblue sealed image and digest above.
-- Upstream OVMF variable store SHA-256:
-  `07029be230ad284b910e94e16dbd05f5b495f194dea90629bfdf94cb390b853b`
+- Upstream Secure Boot PK PEM SHA-256:
+  `ebb379ce8b02d49ba1969935793b282e01e0c208b769d06a0674164a972e0bab`
+- Upstream Secure Boot KEK PEM SHA-256:
+  `c264c2d7b9de792e778ba4cd8541ffb51d7c664e7b1f785fde9b613ae54f0537`
+- Upstream key-owner GUID SHA-256:
+  `94d712c748d49cfcd62ed3f8e1eb519fb0c8009340d30a29f26f80e75bc433f9`
 - Vendored Cosign public key SHA-256:
   `454e4bc8d59d3c356d193a006d2dbf98a2cbdac6db7e3320da2c57590b6e3ba4`
 - Vendored Secure Boot DB certificate SHA-256:
@@ -41,9 +45,16 @@ without the loaded-path identity join cannot pass.
 
 The pinned image was created at `2026-04-15T23:00:51.271335521Z` inside the
 successful upstream run above. The registry tag history, image creation time,
-run source commit, OVMF variable-store digest, Secure Boot certificate, and
-Cosign key form the frozen provenance packet. The workflow verifies the image
-manifest and signature again before installation.
+run source commit, Secure Boot PK/KEK/db certificates, owner GUID, and Cosign
+key form the frozen provenance packet. The workflow verifies the image manifest
+and signature again before installation.
+
+The upstream variable store was generated against Fedora's EDK2 build and must
+not be mixed with another distribution's OVMF code. The canary instead starts
+from the variable template paired with the GitHub runner's Secure Boot firmware,
+enrolls the frozen upstream PK/KEK/db certificates, and extracts the resulting
+store to verify all three DER fingerprints before boot. The firmware code,
+template, and derived variable-store hashes are preserved in the receipt.
 
 This historical candidate replaces the August 3 image after three fail-closed
 runs proved that image internally inconsistent for installation. Its UKI

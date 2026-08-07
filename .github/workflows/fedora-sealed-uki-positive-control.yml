@@ -32,7 +32,9 @@ env:
   ATTESTOS_FEDORA_IMAGE_CREATED: '2026-04-15T23:00:51.271335521Z'
   ATTESTOS_FEDORA_IMAGE_REFERENCE: quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d0e34c45cb33adbeee3ada65b33addbb30297eb938bdb7af35c67b63b7028eb7
   ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE: quay.io/fedora-atomic-desktops-sealed/silverblue@sha256:d0e34c45cb33adbeee3ada65b33addbb30297eb938bdb7af35c67b63b7028eb7
-  ATTESTOS_FEDORA_OVMF_VARS_SHA256: 07029be230ad284b910e94e16dbd05f5b495f194dea90629bfdf94cb390b853b
+  ATTESTOS_FEDORA_PK_PEM_SHA256: ebb379ce8b02d49ba1969935793b282e01e0c208b769d06a0674164a972e0bab
+  ATTESTOS_FEDORA_KEK_PEM_SHA256: c264c2d7b9de792e778ba4cd8541ffb51d7c664e7b1f785fde9b613ae54f0537
+  ATTESTOS_FEDORA_GUID_SHA256: 94d712c748d49cfcd62ed3f8e1eb519fb0c8009340d30a29f26f80e75bc433f9
 
 jobs:
   positive-control:
@@ -65,6 +67,7 @@ jobs:
             podman \
             python3-jsonschema \
             python3-pytest \
+            python3-virt-firmware \
             qemu-system-x86 \
             qemu-utils \
             sbsigntool \
@@ -142,20 +145,81 @@ jobs:
               platform: {os: "linux", architecture: "amd64"}
             }' > fedora-output/provenance.json
 
-      - name: Fetch pinned Secure Boot variable store
+      - name: Build and audit matched Secure Boot variable store
         run: |
           set -euxo pipefail
-          source_url="https://raw.githubusercontent.com/travier/fedora-atomic-desktops-sealed/${ATTESTOS_FEDORA_SOURCE_COMMIT}/OVMF_VARS_CUSTOM.qcow2"
-          curl --fail --location --silent --show-error \
-            "$source_url" \
-            --output fedora-output/OVMF_VARS_CUSTOM.qcow2
-          echo "$ATTESTOS_FEDORA_OVMF_VARS_SHA256  fedora-output/OVMF_VARS_CUSTOM.qcow2" \
-            | sha256sum --check --strict
-          qemu-img convert \
-            -f qcow2 \
-            -O raw \
-            fedora-output/OVMF_VARS_CUSTOM.qcow2 \
-            fedora-output/OVMF_VARS_CUSTOM.fd
+          upstream="https://raw.githubusercontent.com/travier/fedora-atomic-desktops-sealed/${ATTESTOS_FEDORA_SOURCE_COMMIT}"
+          curl --fail --location --silent --show-error "$upstream/keys/GUID" \
+            --output fedora-output/secureboot-guid
+          curl --fail --location --silent --show-error "$upstream/keys/PK/PK.pem" \
+            --output fedora-output/secureboot-pk.pem
+          curl --fail --location --silent --show-error "$upstream/keys/KEK/KEK.pem" \
+            --output fedora-output/secureboot-kek.pem
+          echo "$ATTESTOS_FEDORA_GUID_SHA256  fedora-output/secureboot-guid" | sha256sum --check --strict
+          echo "$ATTESTOS_FEDORA_PK_PEM_SHA256  fedora-output/secureboot-pk.pem" | sha256sum --check --strict
+          echo "$ATTESTOS_FEDORA_KEK_PEM_SHA256  fedora-output/secureboot-kek.pem" | sha256sum --check --strict
+
+          code=""
+          template=""
+          for pair in \
+            /usr/share/OVMF/OVMF_CODE_4M.secboot.fd:/usr/share/OVMF/OVMF_VARS_4M.fd \
+            /usr/share/OVMF/OVMF_CODE.secboot.fd:/usr/share/OVMF/OVMF_VARS.fd; do
+            candidate_code=${pair%%:*}
+            candidate_template=${pair#*:}
+            if [[ -f "$candidate_code" && -f "$candidate_template" ]]; then
+              code=$candidate_code
+              template=$candidate_template
+              break
+            fi
+          done
+          [[ -n "$code" && -n "$template" ]]
+
+          guid=$(tr -d '\r\n' < fedora-output/secureboot-guid)
+          virt-fw-vars \
+            --input "$template" \
+            --secure-boot \
+            --set-pk "$guid" fedora-output/secureboot-pk.pem \
+            --add-kek "$guid" fedora-output/secureboot-kek.pem \
+            --add-db "$guid" trust/fedora-sealed-secureboot-db.pem \
+            --output fedora-output/OVMF_VARS_CUSTOM.fd \
+            --output-json fedora-output/firmware-vars.json
+
+          mkdir fedora-output/extracted-certs
+          (
+            cd fedora-output/extracted-certs
+            virt-fw-vars --input ../OVMF_VARS_CUSTOM.fd --extract-certs
+          )
+          for expected in \
+            c10c10a6309ea4544f04561edc3c12c22259e3d29ee30de70b65345b22b7cfd9 \
+            ace51bc81ad18ac6d6bf86a65960f714e3a29c4074d1ab8ee890139f544588af \
+            652a7d50464cf88bb0601fca90e603cded93083e6bdc9fab3cf17084dae1f524; do
+            found=false
+            for cert in fedora-output/extracted-certs/*.pem; do
+              actual=$(openssl x509 -in "$cert" -outform DER | sha256sum | cut -d' ' -f1)
+              [[ "$actual" == "$expected" ]] && found=true
+            done
+            [[ "$found" == true ]]
+          done
+
+          jq -n \
+            --arg code_path "$code" \
+            --arg code_sha256 "$(sha256sum "$code" | cut -d' ' -f1)" \
+            --arg template_path "$template" \
+            --arg template_sha256 "$(sha256sum "$template" | cut -d' ' -f1)" \
+            --arg vars_sha256 "$(sha256sum fedora-output/OVMF_VARS_CUSTOM.fd | cut -d' ' -f1)" \
+            --arg upstream_commit "$ATTESTOS_FEDORA_SOURCE_COMMIT" \
+            '{
+              format: "attestos.fedora_sealed_firmware/v1",
+              code: {path: $code_path, sha256: $code_sha256},
+              variable_template: {path: $template_path, sha256: $template_sha256},
+              enrolled_variables_sha256: $vars_sha256,
+              enrolled_key_source_commit: $upstream_commit,
+              secure_boot_enabled: true,
+              pk_der_sha256: "c10c10a6309ea4544f04561edc3c12c22259e3d29ee30de70b65345b22b7cfd9",
+              kek_der_sha256: "ace51bc81ad18ac6d6bf86a65960f714e3a29c4074d1ab8ee890139f544588af",
+              db_der_sha256: "652a7d50464cf88bb0601fca90e603cded93083e6bdc9fab3cf17084dae1f524"
+            }' > fedora-output/firmware-provenance.json
+          echo "ATTESTOS_FEDORA_OVMF_CODE=$code" >> "$GITHUB_ENV"
           echo "ATTESTOS_FEDORA_OVMF_VARS=$PWD/fedora-output/OVMF_VARS_CUSTOM.fd" \
             >> "$GITHUB_ENV"
 
@@ -196,6 +260,8 @@ jobs:
             fedora-output/source-prepare-root.conf
             fedora-output/source-prepare-root.sha256
             fedora-output/provenance.json
+            fedora-output/firmware-vars.json
+            fedora-output/firmware-provenance.json
             fedora-output/static-inspection.json
             fedora-output/guest-evidence.json
             fedora-output/positive-control.json

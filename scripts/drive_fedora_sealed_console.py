@@ -14,6 +14,7 @@ KEYS = {
     " ": "spc",
     "/": "slash",
     ".": "dot",
+    "_": "shift-minus",
 }
 
 

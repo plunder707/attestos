@@ -23,6 +23,9 @@ validator = load(
     "fedora_validator", ROOT / "scripts/validate_fedora_sealed_positive_control.py"
 )
 probe = load("fedora_probe", ROOT / "scripts/fedora_sealed_guest_probe.py")
+console = load(
+    "fedora_console", ROOT / "scripts/drive_fedora_sealed_console.py"
+)
 
 
 IMAGE = (
@@ -193,6 +196,26 @@ def test_historical_control_binds_source_and_installer_to_one_digest():
     assert image_line.split(": ", 1)[1] == installer_line.split(": ", 1)[1]
     assert "ATTESTOS_FEDORA_UPSTREAM_RUN_ID: '24482575655'" in workflow
     assert "source-inspection.json" in workflow
+
+
+def test_secure_boot_code_and_variable_template_remain_a_matched_pair():
+    workflow = (
+        ROOT / ".github/workflows/fedora-sealed-uki-positive-control.yml"
+    ).read_text()
+    runner = (ROOT / "scripts/run_fedora_sealed_positive_control.sh").read_text()
+    assert "candidate_code=${pair%%:*}" in workflow
+    assert "candidate_template=${pair#*:}" in workflow
+    assert "--set-pk" in workflow
+    assert "--add-kek" in workflow
+    assert "--add-db" in workflow
+    assert "--extract-certs" in workflow
+    assert "ATTESTOS_FEDORA_OVMF_CODE=$code" in workflow
+    assert "OVMF_VARS_CUSTOM.qcow2" not in workflow
+    assert "ATTESTOS_FEDORA_OVMF_CODE" in runner
+
+
+def test_console_driver_can_type_probe_path_underscore():
+    assert console.KEYS["_"] == "shift-minus"
 
 
 def test_cli_enforcement_writes_failure_receipt(tmp_path):
