@@ -261,6 +261,25 @@ def test_cmdline_mutation_preserves_certificate_bytes_and_file_size():
     assert details["original_cmdline_sha256"] != details["tampered_cmdline_sha256"]
 
 
+def test_cmdline_mutation_can_bound_addon_without_certificate_directory():
+    source = bytearray(synthetic_signed_pe_with_cmdline())
+    struct.pack_into("<II", source, 0x128, 0, 0)
+    with pytest.raises(cmdline_mutator.PEError, match="certificate table"):
+        cmdline_mutator.mutate_cmdline(bytes(source))
+
+    mutated, details = cmdline_mutator.mutate_cmdline(
+        bytes(source), require_certificate_table=False
+    )
+    assert len(mutated) == len(source)
+    assert details["certificate_table_present"] is False
+    assert details["certificate_table_preserved"] is None
+    assert details["only_cmdline_section_changed"] is True
+    assert (
+        details["outside_cmdline_sha256_before"] ==
+        details["outside_cmdline_sha256_after"]
+    )
+
+
 def test_cmdline_dump_uses_disposable_objcopy_input(tmp_path, monkeypatch):
     source = tmp_path / "source.efi"
     destination = tmp_path / "cmdline"

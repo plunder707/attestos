@@ -81,7 +81,10 @@ def addon_static() -> dict:
                 "mutation": "embedded_cmdline_bytes_without_resigning",
                 "original_uki_sha256": ADDON,
                 "tampered_uki_sha256": TAMPERED,
-                "certificate_table_preserved": True,
+                "certificate_table_preserved": None,
+                "outside_cmdline_sha256_before": "0" * 64,
+                "outside_cmdline_sha256_after": "0" * 64,
+                "only_cmdline_section_changed": True,
                 "file_size_unchanged": True,
             },
         },
@@ -260,6 +263,7 @@ def test_scripts_preserve_nonpublication_and_private_key_boundary():
     ).read_text()
     assert 'python3 "$ukify" build' in preparer
     assert '--stub="$addon_stub"' in preparer
+    assert "--allow-missing-certificate-table" in preparer
     assert "--add-db" in preparer
     assert "private_key_persisted: false" in preparer
     assert 'rm -f "$work/addon.key"' in preparer

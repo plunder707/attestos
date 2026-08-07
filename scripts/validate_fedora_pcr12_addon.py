@@ -211,7 +211,10 @@ def evaluate(
             and mutation.get("mutation") == "embedded_cmdline_bytes_without_resigning"
             and mutation.get("original_uki_sha256") == signed_addon_sha256
             and mutation.get("tampered_uki_sha256") == tampered_addon_sha256
-            and mutation.get("certificate_table_preserved") is True
+            and mutation.get("only_cmdline_section_changed") is True
+            and mutation.get("outside_cmdline_sha256_before") ==
+            mutation.get("outside_cmdline_sha256_after")
+            and digest(mutation.get("outside_cmdline_sha256_before")) is not None
             and mutation.get("file_size_unchanged") is True
         ),
         "baseline_arm_join": arm_join(baseline_arm, "baseline", uki_sha256 or "", None),
