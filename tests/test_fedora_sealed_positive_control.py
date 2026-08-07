@@ -53,6 +53,11 @@ def static_evidence() -> dict:
             "uefi_path": "\\EFI\\Linux\\fedora.efi",
             "sha256": UKI,
             "upstream_sha256": "c" * 64,
+            "upstream_size_bytes": 8192,
+            "installed_upstream_sha256": "f" * 64,
+            "installed_upstream_size_bytes": 4096,
+            "immutable_source_reference": IMAGE,
+            "immutable_source_signature_verified": True,
             "embedded_cmdline_sha256": "b" * 64,
             "certificate_sha256": "d" * 64,
             "signature_verified": False,
@@ -95,6 +100,13 @@ def compatibility_evidence() -> dict:
     return {
         "format": "attestos.fedora_sealed_compat_resign/v1",
         "purpose": "harness_compatibility_positive_control_only",
+        "source_reference": IMAGE,
+        "installed_upstream_uki_sha256": "f" * 64,
+        "installed_upstream_uki_size_bytes": 4096,
+        "immutable_source_uki_sha256": "c" * 64,
+        "immutable_source_uki_size_bytes": 8192,
+        "immutable_source_signature_verified": True,
+        "installed_and_source_cmdline_match": True,
         "original_uki_sha256": "c" * 64,
         "unsigned_uki_sha256": "1" * 64,
         "compatibility_signed_uki_sha256": UKI,
@@ -286,6 +298,17 @@ def test_guest_cannot_promote_a_trust_stage(key):
 def test_compatibility_receipt_must_bind_original_and_resigned_hashes():
     compatibility = compatibility_evidence()
     compatibility["compatibility_signed_uki_sha256"] = "e" * 64
+    result = validator.evaluate(
+        static_evidence(), guest_evidence(), provenance(),
+        compatibility, certificate_strip_evidence(), tamper_evidence()
+    )
+    assert result["passed"] is False
+    assert result["gates"]["compatibility_receipt_join"] is False
+
+
+def test_compatibility_receipt_must_bind_installed_and_immutable_source():
+    compatibility = compatibility_evidence()
+    compatibility["immutable_source_uki_sha256"] = "e" * 64
     result = validator.evaluate(
         static_evidence(), guest_evidence(), provenance(),
         compatibility, certificate_strip_evidence(), tamper_evidence()
@@ -487,10 +510,12 @@ def test_compatibility_resign_preserves_original_as_a_separate_negative_gate():
     preparer = (
         ROOT / "scripts/prepare_fedora_sealed_compat_control.sh"
     ).read_text()
-    assert 'source_sha256=$(sudo sha256sum "$uki"' in preparer
-    assert '[[ "$source_sha256" == "$expected_sha256" ]]' in preparer
+    assert 'installed_sha256=$(sudo sha256sum "$installed_uki"' in preparer
+    assert '[[ "$installed_sha256" == "$expected_sha256" ]]' in preparer
     assert '[[ "$upstream_cert_sha256" == "$expected_cert_sha256" ]]' in preparer
-    assert '[[ "$copy_sha256" == "$expected_sha256" ]]' in preparer
+    assert 'podman cp "$source_container:/boot/EFI/Linux/."' in preparer
+    assert 'sbverify --cert "$upstream_cert" "$work/original.efi"' in preparer
+    assert 'cmp "$work/installed.cmdline" "$work/original.cmdline"' in preparer
     assert "--network=none" in preparer
     assert "scripts/strip_pe_certificate_table.py" in preparer
     assert '--receipt "$output/certificate-strip.json"' in preparer

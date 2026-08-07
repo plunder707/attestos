@@ -91,9 +91,36 @@ def evaluate(
             "secure_boot_firmware_admission" and
             compatibility.get("canary_rsa_bits") == 2048 and
             compatibility.get("private_key_persisted") is False and
+            compatibility.get("source_reference") == provenance_reference and
+            static_uki.get("immutable_source_reference") == provenance_reference and
+            compatibility.get("immutable_source_signature_verified") is True and
+            static_uki.get("immutable_source_signature_verified") is True and
+            compatibility.get("installed_and_source_cmdline_match") is True and
+            digest(compatibility.get("installed_upstream_uki_sha256")) is not None and
+            compatibility.get("installed_upstream_uki_sha256") ==
+            static_uki.get("installed_upstream_sha256") and
+            isinstance(
+                compatibility.get("installed_upstream_uki_size_bytes"), int
+            ) and
+            isinstance(static_uki.get("installed_upstream_size_bytes"), int) and
+            compatibility.get("installed_upstream_uki_size_bytes", 0) ==
+            static_uki.get("installed_upstream_size_bytes") and
+            static_uki.get("installed_upstream_size_bytes", 0) > 0 and
+            digest(compatibility.get("immutable_source_uki_sha256")) is not None and
+            compatibility.get("immutable_source_uki_sha256") ==
+            static_uki.get("upstream_sha256") and
+            isinstance(
+                compatibility.get("immutable_source_uki_size_bytes"), int
+            ) and
+            isinstance(static_uki.get("upstream_size_bytes"), int) and
+            compatibility.get("immutable_source_uki_size_bytes", 0) ==
+            static_uki.get("upstream_size_bytes") and
+            static_uki.get("upstream_size_bytes", 0) > 0 and
+            compatibility.get("installed_upstream_uki_sha256") !=
+            compatibility.get("immutable_source_uki_sha256") and
             digest(compatibility.get("original_uki_sha256")) is not None and
             compatibility.get("original_uki_sha256") ==
-            static_uki.get("upstream_sha256") and
+            compatibility.get("immutable_source_uki_sha256") and
             digest(compatibility.get("unsigned_uki_sha256")) is not None and
             compatibility.get("unsigned_uki_sha256") not in (
                 compatibility.get("original_uki_sha256"),
