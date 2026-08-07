@@ -23,7 +23,7 @@ owner_guid='9d4f4ef8-5f6d-4a73-9b2c-90c8e6c2e6f1'
 work=$(mktemp -d -p /tmp attestos-pcr12-addon.XXXXXX)
 mkdir -p "$output" "$(dirname "$output_vars")"
 
-for command in jq objcopy objdump openssl python3 sbverify sha256sum virt-fw-vars; do
+for command in jq objcopy objdump openssl podman python3 sbverify sha256sum sudo virt-fw-vars; do
     command -v "$command" >/dev/null || {
         echo "missing required command: $command" >&2
         exit 1
@@ -42,16 +42,34 @@ openssl req -new -newkey rsa:2048 -nodes -x509 -sha256 -days 1 \
     -keyout "$work/addon.key" \
     -out "$work/addon.pem" >/dev/null 2>&1
 
+unsigned="$work/10-attestos-policy.unsigned.addon.efi"
 python3 "$ukify" build \
     --stub="$addon_stub" \
-    --secureboot-private-key="$work/addon.key" \
-    --secureboot-certificate="$work/addon.pem" \
     --cmdline="$policy" \
     --sbat="sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md
 attestos-addon,1,attestos PCR12 canary,attestos-addon,1,https://github.com/plunder707/attestos" \
-    --output="$work/10-attestos-policy.addon.efi"
+    --output="$unsigned"
+
+sudo podman run \
+    --rm \
+    --network=none \
+    -v "$work:/work:rw,Z" \
+    "$source_reference" \
+    sh -eu -c '
+        signer=$(command -v systemd-sbsign || true)
+        if test -z "$signer"; then
+            signer=/usr/lib/systemd/systemd-sbsign
+        fi
+        test -x "$signer"
+        exec "$signer" sign \
+            --private-key=/work/addon.key \
+            --certificate=/work/addon.pem \
+            --output=/work/10-attestos-policy.addon.efi \
+            /work/10-attestos-policy.unsigned.addon.efi
+    '
 
 addon="$work/10-attestos-policy.addon.efi"
+sudo chown "$(id -u):$(id -g)" "$addon"
 test -s "$addon"
 sbverify --cert "$work/addon.pem" "$addon" >/dev/null
 if objdump -h "$addon" | awk '$2 == ".linux" {found=1} END {exit !found}'; then
@@ -75,8 +93,7 @@ PY
 python3 scripts/mutate_pe_cmdline.py \
     --input "$addon" \
     --output "$work/10-attestos-policy.tampered.addon.efi" \
-    --receipt "$work/addon-mutation.json" \
-    --allow-unusable-certificate-table >/dev/null
+    --receipt "$work/addon-mutation.json" >/dev/null
 if sbverify --cert "$work/addon.pem" "$work/10-attestos-policy.tampered.addon.efi" \
     >/dev/null 2>&1; then
     echo "tampered addon still verifies" >&2
@@ -136,6 +153,7 @@ jq -n \
     --arg boot_rpm_sha256 "$boot_rpm_sha256" \
     --arg ukify_sha256 "$expected_ukify_sha256" \
     --arg addon_stub_sha256 "$expected_stub_sha256" \
+    --arg unsigned_addon_sha256 "$(sha256sum "$unsigned" | cut -d' ' -f1)" \
     --arg policy "$policy" \
     --arg owner_guid "$owner_guid" \
     --arg addon_sha256 "$(sha256sum "$addon" | cut -d' ' -f1)" \
@@ -156,7 +174,10 @@ jq -n \
         ukify_rpm_sha256: $ukify_rpm_sha256,
         boot_unsigned_rpm_sha256: $boot_rpm_sha256,
         ukify_sha256: $ukify_sha256,
-        addon_stub_sha256: $addon_stub_sha256
+        addon_stub_sha256: $addon_stub_sha256,
+        signature_tool: "immutable_fedora_systemd-sbsign",
+        signing_image_reference: $source_reference,
+        unsigned_addon_sha256: $unsigned_addon_sha256
       },
       addon: {
         name: "10-attestos-policy.addon.efi",

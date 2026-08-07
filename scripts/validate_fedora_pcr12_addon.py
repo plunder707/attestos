@@ -19,6 +19,7 @@ BUILDER = {
     "boot_unsigned_rpm_sha256": "a392ae378b3b6b2d2cee9233c1f3aa2333c8f9f95f65c0b30724840706a29f3f",
     "ukify_sha256": "33c1bc2a0143ac287fe2300ef6177ea4f8e6ccaa71fab8ad44741e2d5a8a7edd",
     "addon_stub_sha256": "23370bb3685f804f5c722648379f3dcbe4474998030b1595ee85690e38350ce5",
+    "signature_tool": "immutable_fedora_systemd-sbsign",
 }
 
 
@@ -186,7 +187,14 @@ def evaluate(
             and addon_static.get("private_key_persisted") is False
             and addon_static.get("source_reference") == static.get("source_reference")
         ),
-        "pinned_matching_addon_builder": builder == BUILDER,
+        "pinned_matching_addon_builder": (
+            builder == {
+                **BUILDER,
+                "signing_image_reference": static.get("source_reference"),
+                "unsigned_addon_sha256": builder.get("unsigned_addon_sha256"),
+            }
+            and digest(builder.get("unsigned_addon_sha256")) is not None
+        ),
         "extended_variable_store_contract": (
             firmware.get("format") == "attestos.fedora_sealed_firmware/v1"
             and addon_static.get("variable_store", {}).get("source_sha256") ==
@@ -212,6 +220,8 @@ def evaluate(
             and mutation.get("original_uki_sha256") == signed_addon_sha256
             and mutation.get("tampered_uki_sha256") == tampered_addon_sha256
             and mutation.get("only_cmdline_section_changed") is True
+            and mutation.get("certificate_table_valid") is True
+            and mutation.get("certificate_table_preserved") is True
             and mutation.get("outside_cmdline_sha256_before") ==
             mutation.get("outside_cmdline_sha256_after")
             and digest(mutation.get("outside_cmdline_sha256_before")) is not None

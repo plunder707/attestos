@@ -25,8 +25,6 @@ def sha256(data: bytes) -> str:
 def mutate_cmdline(
     data: bytes,
     suffix: bytes = DEFAULT_SUFFIX,
-    *,
-    require_certificate_table: bool = True,
 ) -> tuple[bytes, dict]:
     if not suffix or b"\0" in suffix:
         raise PEError("mutation suffix must be non-empty and contain no NUL")
@@ -68,9 +66,9 @@ def mutate_cmdline(
     certificate_table_in_bounds = (
         certificate_table_complete and certificate_end <= len(data)
     )
-    if require_certificate_table and not certificate_table_complete:
+    if not certificate_table_complete:
         raise PEError("input does not contain a complete certificate table")
-    if require_certificate_table and not certificate_table_in_bounds:
+    if not certificate_table_in_bounds:
         raise PEError("certificate table extends beyond input")
 
     section_table_end = optional_end + section_count * 40
@@ -93,7 +91,7 @@ def mutate_cmdline(
     certificate_table_overlaps_sections = (
         certificate_table_in_bounds and certificate_offset < max_section_raw_end
     )
-    if require_certificate_table and certificate_table_overlaps_sections:
+    if certificate_table_overlaps_sections:
         raise PEError("certificate table overlaps section raw data")
     certificate_table_valid = (
         certificate_table_in_bounds and not certificate_table_overlaps_sections
@@ -167,21 +165,10 @@ def main() -> int:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
-    parser.add_argument(
-        "--allow-unusable-certificate-table",
-        action="store_true",
-        help=(
-            "permit missing or non-canonical certificate-directory metadata; "
-            "the mutation remains byte-bounded to .cmdline"
-        ),
-    )
     args = parser.parse_args()
 
     source = args.input.read_bytes()
-    mutated, details = mutate_cmdline(
-        source,
-        require_certificate_table=not args.allow_unusable_certificate_table,
-    )
+    mutated, details = mutate_cmdline(source)
     args.output.write_bytes(mutated)
     receipt = {
         "format": FORMAT,

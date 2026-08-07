@@ -15,6 +15,11 @@ MOK, appends their `.cmdline` sections after the UKI command line, and measures
 the add-on parameters into PCR 12. `StubPcrKernelParameters` is set to `12`
 only when that measurement completes.
 
+The add-on is assembled with the digest-pinned Fedora v259.5 `ukify` and stub,
+then signed by `systemd-sbsign` inside the same immutable Fedora image used by
+the experiment. A complete, in-bounds PE certificate table is required before
+the signed artifact or its byte-bounded tamper negative can enter any boot arm.
+
 ## Frozen Arms
 
 Every arm uses the same immutable Fedora source and installer, the same

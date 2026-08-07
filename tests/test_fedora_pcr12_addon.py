@@ -61,6 +61,9 @@ def addon_static() -> dict:
             "boot_unsigned_rpm_sha256": "a392ae378b3b6b2d2cee9233c1f3aa2333c8f9f95f65c0b30724840706a29f3f",
             "ukify_sha256": "33c1bc2a0143ac287fe2300ef6177ea4f8e6ccaa71fab8ad44741e2d5a8a7edd",
             "addon_stub_sha256": "23370bb3685f804f5c722648379f3dcbe4474998030b1595ee85690e38350ce5",
+            "signature_tool": "immutable_fedora_systemd-sbsign",
+            "signing_image_reference": "example.invalid/fedora@sha256:" + "6" * 64,
+            "unsigned_addon_sha256": "8" * 64,
         },
         "addon": {
             "name": "10-attestos-policy.addon.efi",
@@ -81,7 +84,8 @@ def addon_static() -> dict:
                 "mutation": "embedded_cmdline_bytes_without_resigning",
                 "original_uki_sha256": ADDON,
                 "tampered_uki_sha256": TAMPERED,
-                "certificate_table_preserved": None,
+                "certificate_table_valid": True,
+                "certificate_table_preserved": True,
                 "outside_cmdline_sha256_before": "0" * 64,
                 "outside_cmdline_sha256_after": "0" * 64,
                 "only_cmdline_section_changed": True,
@@ -170,6 +174,7 @@ def guest(kind: str) -> dict:
 
 def evaluate_with(
     *,
+    addon_static_evidence: dict | None = None,
     baseline_guest: dict | None = None,
     signed_guest_one: dict | None = None,
     signed_guest_two: dict | None = None,
@@ -181,7 +186,7 @@ def evaluate_with(
     signed_arm_two = arm("signed", ADDON)
     tampered_arm = arm("tampered", TAMPERED)
     return validator.evaluate(
-        static_evidence(), firmware(), addon_static(), baseline_arm,
+        static_evidence(), firmware(), addon_static_evidence or addon_static(), baseline_arm,
         baseline_boot_input or boot_input(baseline_arm),
         baseline_guest or guest("baseline"),
         signed_arm_one, boot_input(signed_arm_one),
@@ -245,6 +250,22 @@ def test_boot_input_must_join_exact_installed_disk_and_firmware():
     assert result["gates"]["identical_firmware_inputs_joined"] is False
 
 
+def test_signing_image_must_join_the_immutable_source():
+    evidence = addon_static()
+    evidence["builder"]["signing_image_reference"] = (
+        "example.invalid/decoy@sha256:" + "9" * 64
+    )
+    result = evaluate_with(addon_static_evidence=evidence)
+    assert result["gates"]["pinned_matching_addon_builder"] is False
+
+
+def test_tamper_requires_a_valid_preserved_certificate_table():
+    evidence = addon_static()
+    evidence["tamper"]["mutation"]["certificate_table_valid"] = False
+    result = evaluate_with(addon_static_evidence=evidence)
+    assert result["gates"]["tamper_static_contract"] is False
+
+
 def test_pcr12_read_command_selects_only_sha256_pcr12():
     command = probe.pcr_read_command(12)
     tag, size, command_code = struct.unpack_from(">HII", command)
@@ -263,7 +284,9 @@ def test_scripts_preserve_nonpublication_and_private_key_boundary():
     ).read_text()
     assert 'python3 "$ukify" build' in preparer
     assert '--stub="$addon_stub"' in preparer
-    assert "--allow-unusable-certificate-table" in preparer
+    assert "systemd-sbsign" in preparer
+    assert "--network=none" in preparer
+    assert "10-attestos-policy.unsigned.addon.efi" in preparer
     assert "--add-db" in preparer
     assert "private_key_persisted: false" in preparer
     assert 'rm -f "$work/addon.key"' in preparer
