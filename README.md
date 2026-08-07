@@ -1,5 +1,8 @@
 # attestos
 
+**SOURCE MECHANICS PREVIEW. THREE REQUIRED PCRS ARE ZERO ON THE CURRENT
+BAZZITE CANARY; THIS DOES NOT YET ATTEST THE OPERATING SYSTEM.**
+
 Bazzite with a TPM boot attestation layer on top, so an anti-cheat vendor can
 verify what the machine actually booted instead of checking whether the distro
 name is on a list.
@@ -40,6 +43,8 @@ The completed Bazzite experiment is specified in
 build instructions are in [`BUILDING.md`](BUILDING.md). The next UKI
 engineering candidate and its independent admission criteria are recorded in
 [`UKI_BASE_DECISION.md`](UKI_BASE_DECISION.md).
+The executable candidate contract is
+[`UKI_ADMISSION_CANARY.md`](UKI_ADMISSION_CANARY.md).
 The milestone order and stop rules are tracked in [`ROADMAP.md`](ROADMAP.md).
 
 ---

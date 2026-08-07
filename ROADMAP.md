@@ -41,6 +41,12 @@ Stop if package presence is the only UKI evidence, the signature chain is
 unverified, event-log replay cannot reproduce the quote, or a substitution
 negative passes.
 
+Executable contract: [`UKI_ADMISSION_CANARY.md`](UKI_ADMISSION_CANARY.md) and
+`.github/workflows/uki-base-admission-canary.yml`. The initial development
+version is expected to hold until userspace event-log replay and two-deployment
+update/rollback checks are implemented; those are explicit false gates rather
+than TODOs interpreted as success.
+
 ## 3. Policy verifier
 
 - Replay the firmware and systemd event logs against the quoted PCR snapshot.

@@ -133,6 +133,22 @@ def test_quote_captures_pcrs_in_same_tpm_command(agent, monkeypatch, tmp_path):
     assert response["event_logs"][0]["source"] == "tcg_firmware"
 
 
+def test_systemd_event_log_is_shared_locked_across_quote(agent, monkeypatch, tmp_path):
+    events = []
+    log = tmp_path / "systemd.log"
+    log.write_bytes(b"userspace-events")
+
+    def fake_flock(_fd, operation):
+        events.append(operation)
+
+    monkeypatch.setattr(agent.fcntl, "flock", fake_flock)
+    with agent.locked_optional_log(log) as stream:
+        events.append("quote")
+        assert agent.read_locked_log(stream) == b"userspace-events"
+
+    assert events == [agent.fcntl.LOCK_SH, "quote", agent.fcntl.LOCK_UN]
+
+
 def test_quote_refuses_caller_supplied_channel_binding(agent):
     message = {
         "protocol": agent.PROTOCOL,

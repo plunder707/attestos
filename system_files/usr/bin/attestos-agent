@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
+import fcntl
 import json
 import os
 import subprocess
@@ -107,6 +109,32 @@ def read_optional_log(path: Path) -> bytes | None:
         return None
     if len(data) > MAX_LOG_BYTES:
         raise AgentError(f"event log {path} exceeds {MAX_LOG_BYTES} bytes")
+    return data or None
+
+
+@contextlib.contextmanager
+def locked_optional_log(path: Path):
+    """Hold systemd's shared log lock across quote and snapshot collection."""
+    try:
+        stream = path.open("rb")
+    except OSError:
+        yield None
+        return
+    try:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_SH)
+        yield stream
+    finally:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        stream.close()
+
+
+def read_locked_log(stream) -> bytes | None:
+    if stream is None:
+        return None
+    stream.seek(0)
+    data = stream.read(MAX_LOG_BYTES + 1)
+    if len(data) > MAX_LOG_BYTES:
+        raise AgentError(f"event log {stream.name} exceeds {MAX_LOG_BYTES} bytes")
     return data or None
 
 
@@ -217,35 +245,41 @@ def quote(message: object) -> dict:
         raise AgentError("v1 supports only nonce_only binding")
     qualifying = decode_b64(
         challenge["qualifying_data_b64"], "qualifying_data_b64", 32)
-    with tempfile.TemporaryDirectory(prefix="attestos-quote-") as tmp:
-        root = Path(tmp)
-        msg = root / "quote.msg"
-        sig = root / "quote.sig"
-        pcrs = root / "quote.pcrs"
-        run(
-            "tpm2_quote",
-            "-Q",
-            "-c", AK_HANDLE,
-            "-l", f"{BANK}:{','.join(str(p) for p in PCRS)}",
-            "-q", qualifying.hex(),
-            "-m", str(msg),
-            "-s", str(sig),
-            "-o", str(pcrs),
-            "-F", "values",
-            "-g", "sha256",
-        )
-        raw_message = read_required(msg, 64 * 1024)
-        raw_signature = read_required(sig, 64 * 1024)
-        raw_pcrs = read_required(pcrs, 64 * 1024)
+    # systemd writers take LOCK_EX while extending the PCR and appending to
+    # their userspace log. LOCK_SH makes the quote and log snapshot one
+    # consistent observation rather than two independently valid reads.
+    with locked_optional_log(SYSTEMD_LOG) as systemd_log:
+        with tempfile.TemporaryDirectory(prefix="attestos-quote-") as tmp:
+            root = Path(tmp)
+            msg = root / "quote.msg"
+            sig = root / "quote.sig"
+            pcrs = root / "quote.pcrs"
+            run(
+                "tpm2_quote",
+                "-Q",
+                "-c", AK_HANDLE,
+                "-l", f"{BANK}:{','.join(str(p) for p in PCRS)}",
+                "-q", qualifying.hex(),
+                "-m", str(msg),
+                "-s", str(sig),
+                "-o", str(pcrs),
+                "-F", "values",
+                "-g", "sha256",
+            )
+            raw_message = read_required(msg, 64 * 1024)
+            raw_signature = read_required(sig, 64 * 1024)
+            raw_pcrs = read_required(pcrs, 64 * 1024)
 
-    logs = []
-    for source, path in (
-        ("tcg_firmware", FIRMWARE_LOG),
-        ("systemd_tpm2_measure", SYSTEMD_LOG),
-    ):
-        data = read_optional_log(path)
-        if data:
-            logs.append({"source": source, "data_b64": b64(data)})
+        logs = []
+        firmware_log = read_optional_log(FIRMWARE_LOG)
+        if firmware_log:
+            logs.append({"source": "tcg_firmware", "data_b64": b64(firmware_log)})
+        userspace_log = read_locked_log(systemd_log)
+        if userspace_log:
+            logs.append({
+                "source": "systemd_tpm2_measure",
+                "data_b64": b64(userspace_log),
+            })
     return {
         "protocol": PROTOCOL,
         "kind": "quote_response",

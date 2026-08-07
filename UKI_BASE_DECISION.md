@@ -7,7 +7,7 @@ a production or gaming distribution base.
 
 ## Selection
 
-Use `ghcr.io/ublue-os/bluefin-lts:stable` as the first UKI-capable desktop
+Use `ghcr.io/projectbluefin/bluefin:lts` as the first UKI-capable desktop
 candidate.
 
 The choice is based on current source, not branding:
@@ -23,11 +23,21 @@ The choice is based on current source, not branding:
 
 Primary source references:
 
-- [Bluefin LTS Containerfile](https://github.com/ublue-os/bluefin-lts/blob/main/Containerfile)
-- [Bluefin LTS kernel swap](https://github.com/ublue-os/bluefin-lts/blob/main/build_scripts/scripts/kernel-swap.sh)
+- [Bluefin LTS Containerfile](https://github.com/projectbluefin/bluefin-lts/blob/main/Containerfile)
+- [Bluefin LTS kernel swap](https://github.com/projectbluefin/bluefin-lts/blob/main/build_scripts/scripts/kernel-swap.sh)
 - [bootc UKI cleanup, merged](https://github.com/bootc-dev/bootc/pull/2200)
 - [bootc sealed-image design](https://github.com/bootc-dev/bootc/blob/main/docs/src/experimental-composefs.md)
 - [CentOS Stream kernel UKI package](https://gitlab.com/redhat/centos-stream/rpms/kernel/-/blob/c10s/kernel.spec)
+
+The former draft reference `ghcr.io/ublue-os/bluefin-lts:stable` is not the
+published image location. The workflow must resolve the `projectbluefin`
+reference to an immutable architecture-specific digest before building.
+
+Bluefin's current documentation distinguishes image signing from boot-chain
+admission: the LTS OCI stream is key-signed, while ordinary LTS does not claim
+the same Secure Boot support as its HWE path. The canary therefore verifies
+the OCI signature, PE signature, booted Secure Boot state, and systemd-stub
+evidence as separate gates.
 
 ## Why Bazzite is held
 

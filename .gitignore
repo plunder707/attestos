@@ -1,4 +1,6 @@
 cosign.key
+__pycache__/
+.pytest_cache/
 _build_*
 output
 _build-*/**
