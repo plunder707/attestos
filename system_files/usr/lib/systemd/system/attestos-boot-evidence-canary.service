@@ -2,7 +2,8 @@
 Description=Collect bounded attestos boot evidence for the disposable CI canary
 Documentation=https://github.com/plunder707/attested-gaming
 Requires=attestos-provision.service
-After=attestos-provision.service multi-user.target
+After=attestos-provision.service
+Before=multi-user.target
 ConditionVirtualization=yes
 
 [Service]

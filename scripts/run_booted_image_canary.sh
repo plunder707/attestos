@@ -64,6 +64,9 @@ if [[ ! -S "$socket" ]]; then
 fi
 
 cleanup() {
+    if [[ -n "${qemu_pid:-}" ]]; then
+        kill "$qemu_pid" >/dev/null 2>&1 || true
+    fi
     pkill -f "swtpm socket.*$socket" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -83,8 +86,23 @@ timeout --signal=TERM 25m qemu-system-x86_64 \
     -chardev "socket,id=chrtpm,path=$socket" \
     -tpmdev emulator,id=tpm0,chardev=chrtpm \
     -device tpm-crb,tpmdev=tpm0 \
-    -drive "file=$disk,if=virtio,format=qcow2,cache=unsafe"
+    -drive "file=$disk,if=virtio,format=qcow2,cache=unsafe" &
+qemu_pid=$!
+
+while kill -0 "$qemu_pid" >/dev/null 2>&1; do
+    sleep 30
+    serial_bytes=$(stat -c %s "$serial" 2>/dev/null || echo 0)
+    firmware_resets=$(grep -a -c 'Reset System' "$serial" 2>/dev/null || true)
+    logins=$(grep -a -c 'bazzite login:' "$serial" 2>/dev/null || true)
+    provisions=$(grep -a -c 'Finished .*attestos-provision' "$serial" 2>/dev/null || true)
+    markers=$(grep -a -c 'ATTESTOS_BOOT_EVIDENCE_V1=' "$serial" 2>/dev/null || true)
+    printf 'guest_progress serial_bytes=%s firmware_resets=%s logins=%s provisions=%s markers=%s\n' \
+        "$serial_bytes" "$firmware_resets" "$logins" "$provisions" "$markers"
+done
+
+wait "$qemu_pid"
 qemu_rc=$?
+qemu_pid=""
 set -e
 
 if [[ $qemu_rc -ne 0 ]]; then

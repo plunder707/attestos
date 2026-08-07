@@ -8,6 +8,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "validate_booted_image_receipt.py"
 RUNNER = ROOT / "scripts" / "run_booted_image_canary.sh"
+UNIT = ROOT / "system_files" / "usr" / "lib" / "systemd" / "system" / "attestos-boot-evidence-canary.service"
 SPEC = importlib.util.spec_from_file_location("boot_receipt", SCRIPT)
 assert SPEC and SPEC.loader
 module = importlib.util.module_from_spec(SPEC)
@@ -99,3 +100,11 @@ def test_qemu_runner_allows_firmware_boot_option_reset():
     assert "-no-reboot" not in runner
     assert "-nic none" in runner
     assert "accel=tcg" in runner
+    assert "guest_progress" in runner
+
+
+def test_guest_probe_runs_after_provision_before_multi_user():
+    unit = UNIT.read_text(encoding="utf-8")
+    assert "After=attestos-provision.service\n" in unit
+    assert "Before=multi-user.target\n" in unit
+    assert "After=attestos-provision.service multi-user.target" not in unit
