@@ -1,5 +1,5 @@
 ---
-name: Build container image
+name: Build container image (no publication)
 on:
   pull_request:
     branches:
@@ -22,10 +22,12 @@ on:
   #     - main
   #   paths-ignore:
   #     - '**/README.md'
-  # NOTE: a manual workflow_dispatch on the default branch DOES satisfy the
-  # push condition and will publish. That is deliberate: it is a button
-  # somebody has to press, not something that fires on its own.
+  # Manual runs are build-only. Publication belongs in a separate workflow
+  # with explicit release inputs and narrowly scoped write authority.
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
@@ -36,13 +38,8 @@ concurrency:
 
 jobs:
   build_push:
-    name: Build and push image
+    name: Build image (no publication)
     runs-on: ubuntu-24.04
-
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
 
     steps:
       # These stage versions are pinned by https://github.com/renovatebot/renovate
@@ -126,53 +123,4 @@ jobs:
             "${IMAGE_NAME}" \
             "${DEFAULT_TAG}" \
             "${ALIAS_TAGS}"
-
-      # These `if` statements are so that pull requests for your custom images do not make it publish any packages under your name without you knowing
-      # They also check if the runner is on the default branch so that things like the merge queue (if you enable it), are going to work
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push To GHCR
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        id: push-image
-        env:
-          ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
-        run: |
-          set -euox pipefail
-          for tag in ${ALIAS_TAGS}; do
-            sudo -E podman push --digestfile=/tmp/digestfile ${IMAGE_NAME}:${tag} ${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}
-          done
-
-          digest=$(< /tmp/digestfile)
-
-          echo "digest=${digest}" >> $GITHUB_OUTPUT
-
-      # This section is optional and only needs to be enabled if you plan on distributing
-      # your project for others to consume. You will need to create a public and private key
-      # using Cosign and save the private key as a repository secret in Github for this workflow
-      # to consume. For more details, review the image signing section of the README.
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        with:
-          # be careful when upgrading major versions
-          cosign-release: 'v3.1.2'
-
-      - name: Sign container image
-        id: sign-image
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        env:
-          COSIGN_EXPERIMENTAL: false
-          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
-          DIGEST: ${{ steps.push-image.outputs.digest }}
-        run: |
-          # https://github.com/containers/container-libs/issues/388
-          # https://github.com/coreos/rpm-ostree/issues/5509
-          # use old bundle format, so we can use newer cosign 3.X.X instead of 2.X.X
-          cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY ${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}
 

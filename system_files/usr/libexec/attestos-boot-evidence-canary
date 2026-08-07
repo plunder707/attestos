@@ -1,0 +1,254 @@
+#!/usr/bin/python3
+"""Emit bounded evidence from a booted attestos canary guest.
+
+This program is installed but not enabled in the distributable image. The
+GitHub-only derived canary image enables its systemd unit.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import os
+import secrets
+import subprocess
+import tempfile
+import time
+from pathlib import Path
+
+
+FORMAT = "attestos.boot_guest_evidence/v1"
+MARKER = "ATTESTOS_BOOT_EVIDENCE_V1="
+PCRS = (7, 11, 12, 15)
+SERIAL = Path("/dev/ttyS0")
+STATE = Path("/var/lib/attestos")
+FIRMWARE_LOG = Path("/sys/kernel/security/tpm0/binary_bios_measurements")
+SYSTEMD_LOG = Path("/run/log/systemd/tpm2-measure.log")
+
+
+def run(*args: str, timeout: int = 30, check: bool = True) -> subprocess.CompletedProcess:
+    proc = subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+    if check and proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip()
+        raise RuntimeError(f"{args[0]} failed ({proc.returncode}): {detail[:240]}")
+    return proc
+
+
+def invoke_agent(message: dict) -> dict:
+    proc = subprocess.run(
+        ["/usr/bin/attestos-agent"],
+        input=json.dumps(message, separators=(",", ":")) + "\n",
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+    if proc.returncode != 0:
+        structured = proc.stdout.strip()
+        traceback_tail = proc.stderr.strip()[-512:]
+        detail = structured or traceback_tail or "no diagnostic output"
+        raise RuntimeError(
+            f"attestos-agent failed ({proc.returncode}): {detail[:768]}")
+    return json.loads(proc.stdout)
+
+
+def log_metadata(path: Path) -> dict:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return {"available": False, "size": 0, "sha256": None}
+    return {
+        "available": bool(data),
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest() if data else None,
+    }
+
+
+def wait_for_tpm(seconds: int = 90) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if Path("/dev/tpmrm0").exists():
+            return True
+        time.sleep(1)
+    return False
+
+
+def handle_available(handle: str) -> bool:
+    return run("tpm2_readpublic", "-Q", "-c", handle, check=False).returncode == 0
+
+
+def quote_self_check() -> tuple[bool, dict[int, str]]:
+    request_id = secrets.token_hex(16)
+    enrollment_id = secrets.token_hex(16)
+    nonce = secrets.token_bytes(32)
+    identity = invoke_agent({
+        "protocol": "attestos.tpm/v1",
+        "kind": "identity_challenge",
+        "request_id": request_id,
+        "device_class": "emulator",
+    })
+    response = invoke_agent({
+        "protocol": "attestos.tpm/v1",
+        "kind": "quote_challenge",
+        "request_id": secrets.token_hex(16),
+        "enrollment_id": enrollment_id,
+        "qualifying_data_b64": base64.b64encode(nonce).decode("ascii"),
+        "binding_mode": "nonce_only",
+    })
+    quote = response["quote"]
+    pcr_blob = base64.b64decode(quote["pcrs_b64"], validate=True)
+    if len(pcr_blob) != 32 * len(PCRS):
+        raise RuntimeError("agent returned a non-canonical PCR value blob")
+
+    with tempfile.TemporaryDirectory(prefix="attestos-boot-checkquote-") as tmp:
+        root = Path(tmp)
+        artifacts = {
+            "ak": identity["ak"]["public_pem"].encode("ascii"),
+            "message": base64.b64decode(quote["message_b64"], validate=True),
+            "signature": base64.b64decode(quote["signature_b64"], validate=True),
+            "pcrs": pcr_blob,
+        }
+        paths = {}
+        for name, data in artifacts.items():
+            path = root / name
+            path.write_bytes(data)
+            path.chmod(0o600)
+            paths[name] = path
+        proc = run(
+            "tpm2_checkquote",
+            "-u", str(paths["ak"]),
+            "-m", str(paths["message"]),
+            "-s", str(paths["signature"]),
+            "-f", str(paths["pcrs"]),
+            "-l", "sha256:7,11,12,15",
+            "-g", "sha256",
+            "-q", nonce.hex(),
+            check=False,
+        )
+    values = {
+        pcr: pcr_blob[index * 32:(index + 1) * 32].hex()
+        for index, pcr in enumerate(PCRS)
+    }
+    return proc.returncode == 0, values
+
+
+def bootc_claim() -> dict:
+    proc = run("bootc", "status", "--json", timeout=30, check=False)
+    if proc.returncode != 0:
+        return {"available": False, "image_reference": None, "image_digest": None}
+    try:
+        status = json.loads(proc.stdout)
+        booted = status.get("status", {}).get("booted") or {}
+        image = booted.get("image") or {}
+        identity = image.get("image") or {}
+        return {
+            "available": True,
+            "image_reference": identity.get("image"),
+            "image_digest": image.get("imageDigest"),
+        }
+    except (AttributeError, json.JSONDecodeError):
+        return {"available": False, "image_reference": None, "image_digest": None}
+
+
+def collect() -> dict:
+    errors: list[str] = []
+    tpm_device = wait_for_tpm()
+    provision_active = run(
+        "systemctl", "is-active", "--quiet", "attestos-provision.service",
+        check=False,
+    ).returncode == 0
+    ek_handle = handle_available("0x81010001") if tpm_device else False
+    ak_handle = handle_available("0x81010002") if tpm_device else False
+
+    quote_valid = False
+    pcr_values: dict[int, str] = {}
+    if tpm_device and provision_active and ek_handle and ak_handle:
+        try:
+            quote_valid, pcr_values = quote_self_check()
+        except Exception as exc:  # The receipt must survive a failed probe.
+            errors.append(f"quote_self_check: {exc}")
+
+    cmdline = Path("/proc/cmdline").read_text(encoding="utf-8").strip()
+    firmware = log_metadata(FIRMWARE_LOG)
+    systemd = log_metadata(SYSTEMD_LOG)
+    efi_available = Path("/sys/firmware/efi").is_dir()
+    stub_variables = list(Path("/sys/firmware/efi/efivars").glob("StubInfo-*"))
+    uki_files = list(Path("/boot/EFI/Linux").glob("*.efi"))
+    deployment = bootc_claim()
+    required_state = all((STATE / name).is_file() for name in (
+        "ek.pem", "ak.pem", "ak.name",
+    ))
+
+    success = all((
+        tpm_device,
+        provision_active,
+        ek_handle,
+        ak_handle,
+        required_state,
+        quote_valid,
+        len(pcr_values) == len(PCRS),
+        firmware["available"],
+        deployment["available"],
+    ))
+    return {
+        "format": FORMAT,
+        "success": success,
+        "emulated": True,
+        "tpm": {
+            "device_available": tpm_device,
+            "provision_service_active": provision_active,
+            "ek_handle_available": ek_handle,
+            "ak_handle_available": ak_handle,
+            "required_state_available": required_state,
+            "quote_self_check_valid": quote_valid,
+        },
+        "pcr_values": {"sha256": {str(k): v for k, v in pcr_values.items()}},
+        "event_logs": {"tcg_firmware": firmware, "systemd_tpm2_measure": systemd},
+        "deployment": deployment,
+        "boot": {
+            "efi_available": efi_available,
+            "stub_info_variable_present": bool(stub_variables),
+            "uki_file_count": len(uki_files),
+            "cmdline_sha256": hashlib.sha256(cmdline.encode("utf-8")).hexdigest(),
+            "lockdown_confidentiality_present": "lockdown=confidentiality" in cmdline.split(),
+            "module_sig_enforce_present": "module.sig_enforce=1" in cmdline.split(),
+        },
+        "errors": errors,
+        "manufacturer_trusted": False,
+        "policy_trusted": False,
+        "production_trusted": False,
+    }
+
+
+def main() -> int:
+    try:
+        receipt = collect()
+    except Exception as exc:
+        receipt = {
+            "format": FORMAT,
+            "success": False,
+            "emulated": True,
+            "errors": [f"unhandled_probe_error: {exc}"],
+            "manufacturer_trusted": False,
+            "policy_trusted": False,
+            "production_trusted": False,
+        }
+    line = MARKER + json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n"
+    try:
+        SERIAL.write_text(line, encoding="utf-8")
+    except OSError:
+        print(line, end="", flush=True)
+    finally:
+        run("systemctl", "poweroff", "--no-block", check=False)
+    return 0 if receipt.get("success") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

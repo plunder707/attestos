@@ -1,47 +1,61 @@
 #!/bin/bash
-# Create and persist the attestation key, once, at first boot.
-#
-# The AK is created inside the TPM and never leaves it. It is persisted at a
-# fixed handle so the verifier sees the same key across reboots; regenerating
-# it per request would be slow and would look like a new machine every time.
-#
-# The EK certificate is read from TPM NV storage. That certificate is what
-# chains this key back to the manufacturer, and it is the check that stops an
-# attacker feeding a verifier honest measurements from an emulated TPM inside
-# their own hypervisor.
+# Create or repair the persistent RSA EK/AK pair used by attestos.tpm/v1.
 set -euo pipefail
 
-STATE=/var/lib/attestos
+STATE=${ATTESTOS_STATE_DIR:-/var/lib/attestos}
+EK_HANDLE=0x81010001
 AK_HANDLE=0x81010002
 
-mkdir -p "$STATE"
-
-if tpm2_readpublic -c "$AK_HANDLE" >/dev/null 2>&1; then
-    echo "attestos: AK already provisioned at $AK_HANDLE"
-    exit 0
-fi
-
+install -d -m 0700 "$STATE"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# Endorsement primary, then an attestation key under it.
-tpm2_createek -c "$work/ek.ctx" -G rsa -u "$work/ek.pub"
-tpm2_createak -C "$work/ek.ctx" -c "$work/ak.ctx" \
-    -G rsa -g sha256 -s rsassa \
-    -u "$work/ak.pub" -f pem -n "$work/ak.name"
+list_transient_handles() {
+    tpm2_getcap handles-transient |
+        awk '$1 == "-" && $2 ~ /^0x[0-9a-fA-F]+$/ {print tolower($2)}' |
+        sort -u
+}
 
-tpm2_evictcontrol -C o -c "$work/ak.ctx" "$AK_HANDLE"
-install -m 0444 "$work/ak.pub" "$STATE/ak.pem"
+if ! tpm2_readpublic -Q -c "$EK_HANDLE" >/dev/null 2>&1; then
+    tpm2_createek -Q -c "$EK_HANDLE" -G rsa \
+        -u "$work/ek.pem" -f pem
+fi
+tpm2_readpublic -Q -c "$EK_HANDLE" -o "$work/ek.pem" -f pem
+install -m 0444 "$work/ek.pem" "$STATE/ek.pem"
 
-# EK certificate from NV. Absent on some parts; the verifier fails closed when
-# it is missing rather than trusting an unchained key, which is the correct
-# outcome and not something to paper over here.
+if ! tpm2_readpublic -Q -c "$AK_HANDLE" >/dev/null 2>&1; then
+    list_transient_handles > "$work/transient.before"
+    tpm2_createak -Q -C "$EK_HANDLE" -c "$work/ak.ctx" \
+        -G rsa -g sha256 -s rsassa -u "$work/ak.pem" -f pem \
+        -n "$work/ak.name"
+    list_transient_handles > "$work/transient.after"
+    mapfile -t new_handles < <(
+        comm -13 "$work/transient.before" "$work/transient.after"
+    )
+    if (( ${#new_handles[@]} > 1 )); then
+        echo "attestos: ambiguous transient handle ownership" >&2
+        exit 1
+    fi
+    tpm2_evictcontrol -Q -C o -c "$work/ak.ctx" "$AK_HANDLE"
+    if (( ${#new_handles[@]} == 1 )) &&
+            list_transient_handles | grep -Fqx "${new_handles[0]}"; then
+        tpm2_flushcontext "${new_handles[0]}"
+    fi
+fi
+tpm2_readpublic -Q -c "$AK_HANDLE" -o "$work/ak.pem" -f pem \
+    -n "$work/ak.name"
+install -m 0444 "$work/ak.pem" "$STATE/ak.pem"
+install -m 0444 "$work/ak.name" "$STATE/ak.name"
+
+# RSA EK certificate NV index from the TCG EK Credential Profile. Absence is
+# retained as an explicit fail-closed state, not relabeled as AK certification.
 if tpm2_nvread 0x01c00002 -o "$work/ek.crt" 2>/dev/null; then
-    install -m 0444 "$work/ek.crt" "$STATE/ak.crt"
-    echo "attestos: EK certificate stored"
+    install -m 0444 "$work/ek.crt" "$STATE/ek.crt"
+    echo "attestos: RSA EK certificate stored"
 else
-    echo "attestos: NO EK certificate in NV at 0x01c00002." >&2
-    echo "attestos: attestation will be REFUSED by a conforming verifier." >&2
+    rm -f "$STATE/ek.crt"
+    echo "attestos: no RSA EK certificate at NV 0x01c00002" >&2
+    echo "attestos: manufacturer_trusted must remain false" >&2
 fi
 
-echo "attestos: AK provisioned at $AK_HANDLE"
+echo "attestos: persistent EK $EK_HANDLE and AK $AK_HANDLE are ready"

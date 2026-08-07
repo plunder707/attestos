@@ -1,0 +1,7 @@
+ARG BASE_IMAGE=localhost/attestos:boot-canary-base
+FROM ${BASE_IMAGE}
+
+# This derivative exists only inside the GitHub boot canary job. The normal
+# attestos image installs the probe but never enables it.
+RUN systemctl enable attestos-boot-evidence-canary.service && \
+    bootc container lint

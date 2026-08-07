@@ -1,0 +1,20 @@
+[Unit]
+Description=Collect bounded attestos boot evidence for the disposable CI canary
+Documentation=https://github.com/plunder707/attested-gaming
+Requires=attestos-provision.service
+After=attestos-provision.service
+Before=multi-user.target
+ConditionVirtualization=yes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/attestos-boot-evidence-canary
+TimeoutStartSec=5min
+StandardOutput=journal+console
+StandardError=journal+console
+
+# This unit is intentionally not installed or enabled in the distributable
+# image. Containerfile.boot-canary enables it only in a disposable derivative.
+
+[Install]
+WantedBy=multi-user.target

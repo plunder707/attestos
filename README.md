@@ -10,15 +10,37 @@ This repository is the image that produces the evidence.
 
 ---
 
-> ## STATUS: BUILDS ARE NOT YET VERIFIED. NOTHING HAS BOOTED.
+> ## STATUS: SOURCE MECHANICS PREVIEW. UKI/POLICY TRUST BLOCKED.
 >
-> The Containerfile in this repo has not completed a successful build, the
-> resulting image has never been booted, and no quote has ever been produced
-> by the agent it installs. Secure Boot key enrollment is unsolved (see
-> below), so even a successful build would not attest the way the design
-> assumes.
+> GitHub Actions runs
+> [31157890393](https://github.com/plunder707/attestos/actions/runs/31157890393)
+> and [31159951490](https://github.com/plunder707/attestos/actions/runs/31159951490)
+> built a Bazzite-derived QCOW2, booted it under QEMU/OVMF with swtpm and no
+> guest network, provisioned persistent EK/AK handles, and verified a raw quote
+> over SHA-256 PCRs 7, 11, 12, and 15 from inside the guest. Its bounded receipt
+> has SHA-256 `ad5ef12592cb5f4d1dfa8f0da88148931d48f0e6018924b2de4c766e1523ddaf`.
+> A separate verifier workflow
+> [31160003873](https://github.com/plunder707/attested-gaming/actions/runs/31160003873)
+> exercised this repository's final agent commit `b918392` against an isolated
+> software TPM and passed AK enrollment, raw quote verification, replay
+> rejection, signature-tamper rejection, and QEMU/OVMF TPM wiring.
 >
-> Treat this as a work in progress, not a distribution.
+> The booted result also confirms the Bazzite policy blocker: no UKI file or
+> systemd-stub signal was present, the intended lockdown arguments were absent,
+> and PCRs 11, 12, and 15 remained zero. Secure Boot key enrollment, UKI-backed
+> command-line measurement, hardware provenance, event-log replay, transport
+> binding, and boot-policy admission remain unsolved. Neither green run
+> establishes a functioning production attestation system.
+>
+> This source is available for review and reproducible emulation. No GHCR
+> image is published and it is not an installable trusted distribution.
+
+The completed Bazzite experiment is specified in
+[`BOOTED_IMAGE_CANARY.md`](BOOTED_IMAGE_CANARY.md). Reproduction and source
+build instructions are in [`BUILDING.md`](BUILDING.md). The next UKI
+engineering candidate and its independent admission criteria are recorded in
+[`UKI_BASE_DECISION.md`](UKI_BASE_DECISION.md).
+The milestone order and stop rules are tracked in [`ROADMAP.md`](ROADMAP.md).
 
 ---
 
@@ -29,11 +51,12 @@ Nothing is removed and nothing is patched. Four things go in on top:
 1. **`tpm2-tools` and `tpm2-tss`**, which the agent needs at runtime.
 2. **A kernel command line** at `/usr/lib/attestos/cmdline` carrying
    `lockdown=confidentiality` and `module.sig_enforce=1`.
-3. **`attestos-provision`**, a one-shot unit that creates an attestation key
-   inside the TPM at first boot and persists it, and reads the endorsement
-   certificate out of NV storage.
+3. **`attestos-provision`**, a one-shot unit that creates distinct persistent
+   RSA EK and AK identities inside the TPM and reads the endorsement
+   certificate out of NV storage when one exists.
 4. **`attestos-agent`**, socket-activated on loopback, which answers a
-   challenge with a TPM quote, the PCR values, and the TCG event log.
+   strict `attestos.tpm/v1` identity, activation, or quote challenge with raw
+   TPM evidence. The agent never returns a trust verdict.
 
 ## Why the base is Bazzite
 
@@ -77,11 +100,13 @@ kernel handling Bazzite already does, against a base that excludes the UKI
 packages on purpose. That is a change to how the image boots, not a layer on
 top of it.
 
-Three ways forward, none of them chosen yet:
+The source investigation now narrows the practical choices:
 
 1. Do the UKI work on Bazzite anyway and accept the divergence from the base.
-2. Move to a base that already supports UKI. The bootc ecosystem does deal
-   with `ukify`; Bazzite specifically does not.
+2. Move to a CentOS bootc-derived base that carries a prebuilt UKI. Bluefin
+   LTS is the leading engineering candidate because its current build
+   explicitly installs `kernel-uki-virt`, and upstream bootc has landed sealed
+   UKI/composefs machinery. This is a candidate, not a trust result.
 3. Find a measurement that does not depend on a UKI. Harder, because the
    whole point of the UKI is that it seals a command line the user would
    otherwise be able to edit.
@@ -106,15 +131,10 @@ engineer.
 
 ## Installing it
 
-Once there is a build worth installing, on an existing bootc system:
-
-```
-bootc switch ghcr.io/plunder707/attestos:latest
-systemctl reboot
-```
-
-No ISO and no USB stick. The system pulls the delta, stages the new image, and
-switches on reboot. `bootc rollback` returns you to the previous image.
+There is no supported installation command yet. In particular,
+`ghcr.io/plunder707/attestos:latest` is not published. The current preview is
+for source review and isolated QEMU/swtpm reproduction only. See
+[`BUILDING.md`](BUILDING.md).
 
 ## Layout
 
@@ -133,15 +153,26 @@ their work.
 
 ## What still has to be answered
 
-- Does the image build at all. Not yet confirmed.
-- Which of the three UKI routes to take, given Bazzite excludes UKI kernels.
+- Does the image build at all. Confirmed for commit `14e3a21` by GitHub Actions
+  run `31143048491`; the build emitted two non-fatal DNF-state lint warnings.
+- How a verifier turns the agent's runtime `bootc status` deployment claim
+  into verified image identity. The claim is metadata, not signed authority;
+  on systems without `bootc` it is explicitly `unavailable`.
+- The Bazzite-derived QCOW2 passes the isolated mechanics canary, but its
+  negative UKI and lockdown observations hold it from policy admission.
+- Whether Bluefin LTS/CentOS bootc actually boots the intended signed UKI with
+  the attestos command line embedded and measured. Package presence alone is
+  insufficient.
 - Is PCR 15 populated the way the design assumes on a bootc root.
 - Does MOK enrollment produce a PCR 7 value stable enough to write a policy
   against.
 - Would a vendor accept a MOK-enrolled key hierarchy at all.
 
-The test environment for the first four is QEMU with OVMF and swtpm, which
-needs no additional hardware. The fifth needs an email.
+The runtime measurement questions require QEMU with OVMF and swtpm, which
+needs no additional hardware. The wiring and raw TPM protocol mechanics have
+now passed there, but booting the built image and validating its event log and
+policy remain separate experiments. Vendor acceptance requires a vendor
+conversation.
 
 ## Licence
 

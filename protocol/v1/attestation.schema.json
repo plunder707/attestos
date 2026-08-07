@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/plunder707/attested-gaming/protocol/v1/attestation.schema.json",
+  "title": "attestos TPM protocol v1",
+  "oneOf": [
+    {"$ref": "#/$defs/identity_challenge"},
+    {"$ref": "#/$defs/enrollment_request"},
+    {"$ref": "#/$defs/activation_challenge"},
+    {"$ref": "#/$defs/activation_response"},
+    {"$ref": "#/$defs/quote_challenge"},
+    {"$ref": "#/$defs/quote_response"}
+  ],
+  "$defs": {
+    "protocol": {
+      "const": "attestos.tpm/v1"
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "base64": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 8388608,
+      "pattern": "^[A-Za-z0-9+/]*={0,2}$"
+    },
+    "sha256_base64": {
+      "type": "string",
+      "minLength": 44,
+      "maxLength": 44,
+      "pattern": "^[A-Za-z0-9+/]{43}=$"
+    },
+    "pem": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 32768,
+      "pattern": "^-----BEGIN PUBLIC KEY-----"
+    },
+    "identity_challenge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "kind", "request_id", "device_class"],
+      "properties": {
+        "protocol": {"$ref": "#/$defs/protocol"},
+        "kind": {"const": "identity_challenge"},
+        "request_id": {"$ref": "#/$defs/request_id"},
+        "device_class": {"enum": ["hardware", "emulator"]}
+      }
+    },
+    "enrollment_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "kind", "request_id", "device_class", "ak", "ek"],
+      "properties": {
+        "protocol": {"$ref": "#/$defs/protocol"},
+        "kind": {"const": "enrollment_request"},
+        "request_id": {"$ref": "#/$defs/request_id"},
+        "device_class": {"enum": ["hardware", "emulator"]},
+        "ak": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["public_pem", "name_b64", "key_algorithm", "signing_algorithm"],
+          "properties": {
+            "public_pem": {"$ref": "#/$defs/pem"},
+            "name_b64": {"$ref": "#/$defs/base64"},
+            "key_algorithm": {"const": "rsa-2048"},
+            "signing_algorithm": {"const": "rsassa-sha256"}
+          }
+        },
+        "ek": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["public_pem", "key_algorithm", "certificate_der_b64"],
+          "properties": {
+            "public_pem": {"$ref": "#/$defs/pem"},
+            "key_algorithm": {"const": "rsa-2048"},
+            "certificate_der_b64": {
+              "oneOf": [
+                {"$ref": "#/$defs/base64"},
+                {"type": "null"}
+              ]
+            }
+          }
+        }
+      }
+    },
+    "activation_challenge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "kind", "request_id", "enrollment_id", "credential_blob_b64"],
+      "properties": {
+        "protocol": {"$ref": "#/$defs/protocol"},
+        "kind": {"const": "activation_challenge"},
+        "request_id": {"$ref": "#/$defs/request_id"},
+        "enrollment_id": {"$ref": "#/$defs/request_id"},
+        "credential_blob_b64": {"$ref": "#/$defs/base64"}
+      }
+    },
+    "activation_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "kind", "request_id", "enrollment_id", "secret_b64"],
+      "properties": {
+        "protocol": {"$ref": "#/$defs/protocol"},
+        "kind": {"const": "activation_response"},
+        "request_id": {"$ref": "#/$defs/request_id"},
+        "enrollment_id": {"$ref": "#/$defs/request_id"},
+        "secret_b64": {"$ref": "#/$defs/sha256_base64"}
+      }
+    },
+    "quote_challenge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "kind", "request_id", "enrollment_id", "qualifying_data_b64", "binding_mode"],
+      "properties": {
+        "protocol": {"$ref": "#/$defs/protocol"},
+        "kind": {"const": "quote_challenge"},
+        "request_id": {"$ref": "#/$defs/request_id"},
+        "enrollment_id": {"$ref": "#/$defs/request_id"},
+        "qualifying_data_b64": {"$ref": "#/$defs/sha256_base64"},
+        "binding_mode": {"const": "nonce_only"}
+      }
+    },
+    "event_log": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "data_b64"],
+      "properties": {
+        "source": {"enum": ["tcg_firmware", "systemd_tpm2_measure"]},
+        "data_b64": {"$ref": "#/$defs/base64"}
+      }
+    },
+    "quote_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "kind", "request_id", "enrollment_id", "binding_mode", "qualifying_data_b64", "quote", "event_logs", "deployment_claim"],
+      "properties": {
+        "protocol": {"$ref": "#/$defs/protocol"},
+        "kind": {"const": "quote_response"},
+        "request_id": {"$ref": "#/$defs/request_id"},
+        "enrollment_id": {"$ref": "#/$defs/request_id"},
+        "binding_mode": {"const": "nonce_only"},
+        "qualifying_data_b64": {"$ref": "#/$defs/sha256_base64"},
+        "quote": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["message_b64", "signature_b64", "pcrs_b64", "ak_public_pem", "hash_algorithm", "signing_algorithm", "pcr_selection"],
+          "properties": {
+            "message_b64": {"$ref": "#/$defs/base64"},
+            "signature_b64": {"$ref": "#/$defs/base64"},
+            "pcrs_b64": {"$ref": "#/$defs/base64"},
+            "ak_public_pem": {"$ref": "#/$defs/pem"},
+            "hash_algorithm": {"const": "sha256"},
+            "signing_algorithm": {"const": "rsassa-sha256"},
+            "pcr_selection": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["sha256"],
+              "properties": {
+                "sha256": {
+                  "type": "array",
+                  "prefixItems": [
+                    {"const": 7},
+                    {"const": 11},
+                    {"const": 12},
+                    {"const": 15}
+                  ],
+                  "items": false,
+                  "minItems": 4,
+                  "maxItems": 4
+                }
+              }
+            }
+          }
+        },
+        "event_logs": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/event_log"},
+          "maxItems": 2
+        },
+        "deployment_claim": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "image_reference", "image_digest", "ostree_checksum"],
+          "properties": {
+            "source": {"enum": ["bootc_status_v1", "unavailable"]},
+            "image_reference": {"type": ["string", "null"], "maxLength": 2048},
+            "image_digest": {
+              "type": ["string", "null"],
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "ostree_checksum": {
+              "type": ["string", "null"],
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    }
+  }
+}

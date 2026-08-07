@@ -26,6 +26,10 @@ CMDLINE
 ### Record which image this is, so the running system can name itself.
 echo "${IMAGE_DIGEST:-unknown}" > /usr/lib/attestos/image-digest
 chmod 0444 /usr/lib/attestos/image-digest
+echo "${ATTESTOS_SOURCE_COMMIT:-unknown}" > /usr/lib/attestos/source-commit
+chmod 0444 /usr/lib/attestos/source-commit
+
+chmod 0755 /usr/libexec/attestos-boot-evidence-canary
 
 systemctl enable attestos-provision.service
 systemctl enable attestos-agent.socket
