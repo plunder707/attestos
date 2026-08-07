@@ -13,7 +13,7 @@ source_vars=${ATTESTOS_FEDORA_OVMF_VARS:?missing converted Fedora OVMF variable 
 code=${ATTESTOS_FEDORA_OVMF_CODE:?missing OVMF code paired with variable template}
 mkdir -p "$output"
 
-for command in debugfs mke2fs qemu-img qemu-system-x86_64 swtpm; do
+for command in debugfs jq mke2fs qemu-img qemu-system-x86_64 sha256sum swtpm; do
     command -v "$command" >/dev/null || {
         echo "missing required command: $command" >&2
         exit 1
@@ -34,6 +34,22 @@ cp "$source_vars" "$vars"
 cp scripts/fedora_sealed_guest_probe.py "$probe_root/fedora_sealed_guest_probe.py"
 truncate -s 64M "$probe"
 mke2fs -q -t ext4 -F -d "$probe_root" "$probe"
+jq -n \
+    --arg disk_sha256 "$(sha256sum "$disk" | cut -d' ' -f1)" \
+    --arg ovmf_code_sha256 "$(sha256sum "$code" | cut -d' ' -f1)" \
+    --arg ovmf_vars_source_sha256 "$(sha256sum "$source_vars" | cut -d' ' -f1)" \
+    '{
+      format: "attestos.fedora_sealed_boot_input/v1",
+      disk_sha256: $disk_sha256,
+      ovmf_code_sha256: $ovmf_code_sha256,
+      ovmf_vars_source_sha256: $ovmf_vars_source_sha256,
+      acceleration: "tcg",
+      guest_network: false,
+      fresh_swtpm_state: true,
+      manufacturer_trusted: false,
+      policy_trusted: false,
+      production_trusted: false
+    }' > "$output/boot-input.json"
 
 cleanup() {
     set +e

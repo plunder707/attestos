@@ -96,17 +96,41 @@ def parse_pcr_read_response(response: bytes) -> str:
     return digest.hex()
 
 
-def read_pcr11() -> str:
+def read_pcr(pcr: int) -> str:
     device = next((path for path in (Path("/dev/tpmrm0"), Path("/dev/tpm0")) if path.exists()), None)
     if device is None:
         raise RuntimeError("guest exposes no TPM character device")
     fd = os.open(device, os.O_RDWR)
     try:
-        os.write(fd, pcr_read_command(11))
+        os.write(fd, pcr_read_command(pcr))
         response = os.read(fd, 4096)
     finally:
         os.close(fd)
     return parse_pcr_read_response(response)
+
+
+def read_pcr11() -> str:
+    return read_pcr(11)
+
+
+def locate_addons() -> list[dict]:
+    matches: dict[str, Path] = {}
+    for root in (Path("/boot"), Path("/boot/efi"), Path("/efi")):
+        directory = root / "loader" / "addons"
+        if not directory.is_dir():
+            continue
+        for path in directory.glob("*.addon.efi"):
+            if path.is_file():
+                matches[str(path.resolve())] = path
+    return [
+        {
+            "path": str(path),
+            "name": path.name,
+            "sha256": sha256(path),
+            "size_bytes": path.stat().st_size,
+        }
+        for path in sorted(matches.values(), key=lambda item: str(item))
+    ]
 
 
 def locate_loaded_uki(identifier: str) -> Path:
@@ -126,10 +150,13 @@ def collect() -> dict:
     stub_info = read_efivar_text("StubInfo")
     stub_identifier = read_efivar_text("StubImageIdentifier")
     stub_pcr = read_efivar_text("StubPcrKernelImage")
+    stub_pcr_parameters = read_efivar_text("StubPcrKernelParameters")
     if not stub_identifier:
         raise RuntimeError("systemd-stub did not expose StubImageIdentifier")
     loaded_uki = locate_loaded_uki(stub_identifier)
     pcr11 = read_pcr11()
+    pcr12 = read_pcr(12)
+    cmdline = Path("/proc/cmdline").read_text(encoding="utf-8").strip()
 
     evidence = {
         "format": FORMAT,
@@ -140,6 +167,7 @@ def collect() -> dict:
         "stub_info": stub_info,
         "stub_image_identifier": stub_identifier,
         "stub_pcr_kernel_image": stub_pcr,
+        "stub_pcr_kernel_parameters": stub_pcr_parameters,
         "loaded_uki": {
             "path": str(loaded_uki),
             "uefi_path": "\\EFI\\" + str(loaded_uki).split("/EFI/", 1)[-1].replace("/", "\\")
@@ -147,10 +175,10 @@ def collect() -> dict:
             "sha256": sha256(loaded_uki),
             "size_bytes": loaded_uki.stat().st_size,
         },
-        "pcr_values": {"sha256": {"11": pcr11}},
-        "cmdline_sha256": hashlib.sha256(
-            Path("/proc/cmdline").read_bytes().rstrip(b"\n")
-        ).hexdigest(),
+        "pcr_values": {"sha256": {"11": pcr11, "12": pcr12}},
+        "cmdline_tokens": cmdline.split(),
+        "cmdline_sha256": hashlib.sha256(cmdline.encode()).hexdigest(),
+        "observed_addon_files": locate_addons(),
         "manufacturer_trusted": False,
         "policy_trusted": False,
         "production_trusted": False,
