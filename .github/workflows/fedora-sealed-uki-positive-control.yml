@@ -244,13 +244,19 @@ jobs:
       - name: Confirm frozen upstream UKI admission rejection
         run: |
           set -uo pipefail
+          qemu-img create \
+            -f qcow2 \
+            -F qcow2 \
+            -b "$PWD/fedora-output/fedora-sealed.qcow2" \
+            fedora-output/upstream-admission.qcow2
           set +e
           bash scripts/run_fedora_sealed_positive_control.sh \
-            fedora-output/fedora-sealed.qcow2 \
+            fedora-output/upstream-admission.qcow2 \
             fedora-output/upstream-admission
           rc=$?
           set -e
           [[ $rc -eq 80 ]]
+          rm -f fedora-output/upstream-admission.qcow2
           jq -n \
             --argjson exit_status "$rc" \
             '{

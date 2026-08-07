@@ -215,6 +215,9 @@ def test_upstream_pair_is_frozen_and_compatibility_arm_is_non_authoritative():
     assert '--add-db "$owner_guid" fedora-output/canary-signing.pem' in workflow
     assert "--extract-certs" in workflow
     assert "[[ $rc -eq 80 ]]" in workflow
+    assert 'fedora-output/upstream-admission.qcow2' in workflow
+    assert '-b "$PWD/fedora-output/fedora-sealed.qcow2"' in workflow
+    assert 'rm -f fedora-output/upstream-admission.qcow2' in workflow
     assert "upstream_db_rsa_bits: 4096" in workflow
     assert "rm -f fedora-output/canary-signing.key" in workflow
     assert "fedora-output/canary-signing.key" not in workflow.split(
