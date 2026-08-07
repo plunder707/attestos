@@ -125,6 +125,12 @@ def evaluate(
             isinstance(certificate_strip.get("output_size_bytes"), int) and
             certificate_strip.get("input_size_bytes", 0) >
             certificate_strip.get("output_size_bytes", 0) > 0 and
+            isinstance(
+                certificate_strip.get("terminal_padding_size_bytes"), int
+            ) and
+            0 <= certificate_strip.get("terminal_padding_size_bytes", -1) <=
+            4096 and
+            certificate_strip.get("terminal_padding_all_zero") is True and
             isinstance(certificate_strip.get("certificate_count"), int) and
             certificate_strip.get("certificate_count", 0) >= 1
         ),

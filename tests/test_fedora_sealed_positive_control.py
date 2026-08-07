@@ -133,6 +133,8 @@ def certificate_strip_evidence() -> dict:
         "input_size_bytes": 4096,
         "output_sha256": "1" * 64,
         "output_size_bytes": 2048,
+        "terminal_padding_size_bytes": 0,
+        "terminal_padding_all_zero": True,
         "certificate_count": 1,
         "manufacturer_trusted": False,
         "policy_trusted": False,
@@ -163,17 +165,31 @@ def test_strict_certificate_strip_removes_only_terminal_table():
     assert stripped == source[:0x200][:0x128] + b"\0" * 8 + source[:0x200][0x130:]
     assert details["certificate_table_offset"] == 0x200
     assert details["certificate_table_size"] == 16
+    assert details["terminal_padding_size_bytes"] == 0
+    assert details["terminal_padding_all_zero"] is True
     assert details["certificate_count"] == 1
     assert details["certificates"][0]["certificate_type"] == 0x0002
 
 
 def test_certificate_strip_rejects_nonterminal_or_malformed_tables():
-    with pytest.raises(stripper.PEError, match="terminal file region"):
+    with pytest.raises(stripper.PEError, match="unexplained trailing overlay"):
         stripper.strip_certificate_table(synthetic_signed_pe(b"overlay"))
+    with pytest.raises(stripper.PEError, match="unexplained trailing overlay"):
+        stripper.strip_certificate_table(
+            synthetic_signed_pe(b"\0" * (stripper.MAX_TERMINAL_PADDING + 8))
+        )
     malformed = bytearray(synthetic_signed_pe())
     struct.pack_into("<I", malformed, 0x200, 7)
     with pytest.raises(stripper.PEError, match="smaller than its header"):
         stripper.strip_certificate_table(bytes(malformed))
+
+
+def test_certificate_strip_accepts_only_bounded_zero_terminal_padding():
+    source = synthetic_signed_pe(b"\0" * 504)
+    stripped, details = stripper.strip_certificate_table(source)
+    assert stripped == source[:0x200][:0x128] + b"\0" * 8 + source[:0x200][0x130:]
+    assert details["terminal_padding_size_bytes"] == 504
+    assert details["terminal_padding_all_zero"] is True
 
 
 def test_positive_control_requires_every_join():
@@ -285,6 +301,24 @@ def test_compatibility_receipt_must_bind_signing_inputs(field):
 def test_certificate_strip_receipt_must_join_original_and_unsigned_hashes():
     certificate_strip = certificate_strip_evidence()
     certificate_strip["output_sha256"] = "2" * 64
+    result = validator.evaluate(
+        static_evidence(), guest_evidence(), provenance(),
+        compatibility_evidence(), certificate_strip, tamper_evidence()
+    )
+    assert result["passed"] is False
+    assert result["gates"]["certificate_strip_receipt_join"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("terminal_padding_size_bytes", 4097),
+        ("terminal_padding_all_zero", False),
+    ],
+)
+def test_certificate_strip_receipt_rejects_unexplained_padding(field, value):
+    certificate_strip = certificate_strip_evidence()
+    certificate_strip[field] = value
     result = validator.evaluate(
         static_evidence(), guest_evidence(), provenance(),
         compatibility_evidence(), certificate_strip, tamper_evidence()

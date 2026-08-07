@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 FORMAT = "attestos.pe_certificate_strip/v1"
+MAX_TERMINAL_PADDING = 4096
 
 
 class PEError(RuntimeError):
@@ -29,6 +30,7 @@ def strip_certificate_table(data: bytes) -> tuple[bytes, dict]:
         raise PEError("input has no valid PE signature")
 
     coff_offset = pe_offset + 4
+    section_count = struct.unpack_from("<H", data, coff_offset + 2)[0]
     optional_size = struct.unpack_from("<H", data, coff_offset + 16)[0]
     optional_offset = coff_offset + 20
     optional_end = optional_offset + optional_size
@@ -61,9 +63,36 @@ def strip_certificate_table(data: bytes) -> tuple[bytes, dict]:
         raise PEError("input has no certificate table to remove")
     if certificate_offset % 8 != 0 or certificate_size % 8 != 0:
         raise PEError("certificate table is not 8-byte aligned")
+
+    section_table_end = optional_end + section_count * 40
+    if section_table_end > len(data):
+        raise PEError("section table extends beyond input")
+    max_section_raw_end = 0
+    for index in range(section_count):
+        section_offset = optional_end + index * 40
+        raw_size, raw_offset = struct.unpack_from("<II", data, section_offset + 16)
+        if raw_size == 0:
+            continue
+        raw_end = raw_offset + raw_size
+        if raw_offset == 0 or raw_end > len(data):
+            raise PEError(f"section {index} raw data extends beyond input")
+        max_section_raw_end = max(max_section_raw_end, raw_end)
+    if certificate_offset < max_section_raw_end:
+        raise PEError("certificate table overlaps section raw data")
+
     certificate_end = certificate_offset + certificate_size
-    if certificate_end != len(data):
-        raise PEError("certificate table must be the terminal file region")
+    if certificate_end > len(data):
+        raise PEError("certificate table extends beyond input")
+    terminal_padding = data[certificate_end:]
+    if terminal_padding and (
+        len(terminal_padding) > MAX_TERMINAL_PADDING or any(terminal_padding)
+    ):
+        raise PEError(
+            "certificate table has an unexplained trailing overlay: "
+            f"size={len(terminal_padding)} "
+            f"sha256={sha256(terminal_padding)} "
+            f"all_zero={not any(terminal_padding)}"
+        )
 
     entries: list[dict] = []
     cursor = certificate_offset
@@ -95,6 +124,9 @@ def strip_certificate_table(data: bytes) -> tuple[bytes, dict]:
         "certificate_directory_offset": certificate_directory,
         "certificate_table_offset": certificate_offset,
         "certificate_table_size": certificate_size,
+        "max_section_raw_end": max_section_raw_end,
+        "terminal_padding_size_bytes": len(terminal_padding),
+        "terminal_padding_all_zero": True,
         "certificate_count": len(entries),
         "certificates": entries,
     }
