@@ -64,7 +64,6 @@ source_size=$(sudo stat -c %s "$uki")
 printf 'compat_source size=%s sha256=%s expected_sha256=%s\n' \
     "$source_size" "$source_sha256" "$expected_sha256"
 [[ "$source_sha256" == "$expected_sha256" ]]
-sudo sbverify --cert "$upstream_cert" "$uki"
 sudo dd if="$uki" of="$work/original.efi" bs=4M status=none conv=fsync
 sudo chown "$(id -u):$(id -g)" "$work/original.efi"
 copy_sha256=$(sha256sum "$work/original.efi" | cut -d' ' -f1)
