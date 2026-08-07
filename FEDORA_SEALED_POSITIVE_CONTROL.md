@@ -78,7 +78,8 @@ The matched upstream pair still rejects the original UKI with
 exact upstream db certificate is enrolled. The certificate uses RSA-4096. This
 is retained as a bounded negative admission receipt, not tuned away. A second
 arm adds a fresh RSA-2048 test certificate to a copy of the same variable
-store, replaces only the UKI Authenticode signature, and proves that the
+store, adds a compatibility Authenticode signature with the pinned Fedora
+image's own `systemd-sbsign`, and proves that the
 embedded command line is byte-identical before boot. Its private key is deleted
 before artifacts are collected. That arm is a harness compatibility control;
 it cannot establish that the original upstream signature is firmware-admissible.

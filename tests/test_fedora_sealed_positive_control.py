@@ -259,12 +259,14 @@ def test_compatibility_resign_preserves_upstream_signature_as_a_separate_gate():
     preparer = (
         ROOT / "scripts/prepare_fedora_sealed_compat_control.sh"
     ).read_text()
-    assert 'sbverify --cert "$upstream_cert" "$work/original.efi"' in preparer
     assert 'source_sha256=$(sudo sha256sum "$uki"' in preparer
     assert '[[ "$source_sha256" == "$expected_sha256" ]]' in preparer
+    assert '[[ "$upstream_cert_sha256" == "$expected_cert_sha256" ]]' in preparer
     assert '[[ "$copy_sha256" == "$expected_sha256" ]]' in preparer
-    assert 'sbattach --remove "$work/resigned.efi"' in preparer
-    assert 'sbsign \\' in preparer
+    assert "--network=none" in preparer
+    assert "systemd-sbsign" in preparer
+    assert "--private-key=/work/canary-signing.key" in preparer
+    assert 'rm -f "$work/canary-signing.key"' in preparer
     assert 'cmp "$work/original.cmdline" "$work/signed.cmdline"' in preparer
     assert 'purpose: "harness_compatibility_positive_control_only"' in preparer
     assert "private_key_persisted: false" in preparer

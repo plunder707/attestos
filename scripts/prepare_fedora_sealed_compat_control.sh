@@ -18,7 +18,7 @@ mount_root=$(mktemp -d -p /tmp attestos-fedora-compat.XXXXXX)
 nbd=""
 mkdir -p "$output"
 
-for command in jq objcopy openssl qemu-img qemu-nbd sbattach sbsign sbverify; do
+for command in jq objcopy openssl podman qemu-img qemu-nbd sbverify; do
     command -v "$command" >/dev/null || {
         echo "missing required command: $command" >&2
         exit 1
@@ -59,11 +59,14 @@ uki=${ukis[0]}
 work=$(mktemp -d -p /tmp attestos-fedora-sign.XXXXXX)
 trap 'rm -rf "$work"; cleanup' EXIT
 expected_sha256=$(jq -r '.uki.sha256' "$output/upstream-static-inspection.json")
+expected_cert_sha256=$(jq -r '.uki.certificate_sha256' "$output/upstream-static-inspection.json")
+upstream_cert_sha256=$(sha256sum "$upstream_cert" | cut -d' ' -f1)
 source_sha256=$(sudo sha256sum "$uki" | cut -d' ' -f1)
 source_size=$(sudo stat -c %s "$uki")
 printf 'compat_source size=%s sha256=%s expected_sha256=%s\n' \
     "$source_size" "$source_sha256" "$expected_sha256"
 [[ "$source_sha256" == "$expected_sha256" ]]
+[[ "$upstream_cert_sha256" == "$expected_cert_sha256" ]]
 sudo dd if="$uki" of="$work/original.efi" bs=4M status=none conv=fsync
 sudo chown "$(id -u):$(id -g)" "$work/original.efi"
 copy_sha256=$(sha256sum "$work/original.efi" | cut -d' ' -f1)
@@ -71,15 +74,28 @@ copy_size=$(stat -c %s "$work/original.efi")
 printf 'compat_copy size=%s sha256=%s\n' "$copy_size" "$copy_sha256"
 [[ "$copy_sha256" == "$expected_sha256" ]]
 
-sbverify --cert "$upstream_cert" "$work/original.efi"
 objcopy --dump-section .cmdline="$work/original.cmdline" "$work/original.efi"
-cp "$work/original.efi" "$work/resigned.efi"
-sbattach --remove "$work/resigned.efi"
-sbsign \
-    --key "$canary_key" \
-    --cert "$canary_cert" \
-    --output "$work/signed.efi" \
-    "$work/resigned.efi"
+install -m 0600 "$canary_key" "$work/canary-signing.key"
+install -m 0644 "$canary_cert" "$work/canary-signing.pem"
+sudo podman run \
+    --rm \
+    --network=none \
+    -v "$work:/work:rw,Z" \
+    "$source_reference" \
+    sh -eu -c '
+        signer=$(command -v systemd-sbsign || true)
+        if test -z "$signer"; then
+            signer=/usr/lib/systemd/systemd-sbsign
+        fi
+        test -x "$signer"
+        exec "$signer" sign \
+            --private-key=/work/canary-signing.key \
+            --certificate=/work/canary-signing.pem \
+            --output=/work/signed.efi \
+            /work/original.efi
+    '
+sudo chown "$(id -u):$(id -g)" "$work/signed.efi"
+rm -f "$work/canary-signing.key"
 sbverify --cert "$canary_cert" "$work/signed.efi"
 objcopy --dump-section .cmdline="$work/signed.cmdline" "$work/signed.efi"
 cmp "$work/original.cmdline" "$work/signed.cmdline"
@@ -108,7 +124,7 @@ jq -n \
       purpose: "harness_compatibility_positive_control_only",
       upstream_signature_admitted_by_firmware: false,
       original_uki_sha256: $original_sha256,
-      resigned_uki_sha256: $resigned_sha256,
+      compatibility_signed_uki_sha256: $resigned_sha256,
       embedded_cmdline_sha256: $cmdline_sha256,
       canary_certificate_sha256: $certificate_sha256,
       canary_rsa_bits: ($key_bits | tonumber),
