@@ -10,15 +10,20 @@ This repository is the image that produces the evidence.
 
 ---
 
-> ## STATUS: CONTAINER BUILD VERIFIED. NOTHING HAS BOOTED.
+> ## STATUS: CONTAINER BUILD AND EMULATED TPM MECHANICS VERIFIED. NOTHING HAS BOOTED.
 >
 > GitHub Actions run
 > [31143048491](https://github.com/plunder707/attestos/actions/runs/31143048491)
 > built and rechunked commit `14e3a21` successfully against the Bazzite base.
-> The resulting image has never been booted, and no quote has ever been
-> produced by the agent it installs. Secure Boot key enrollment and UKI-backed
-> command-line measurement remain unsolved (see below), so a successful
-> container build does not establish a functioning attestation system.
+> A separate verifier workflow
+> [31146444974](https://github.com/plunder707/attested-gaming/actions/runs/31146444974)
+> exercised this repository's agent at commit `040e28d` against an isolated
+> software TPM and passed AK enrollment, raw quote verification, replay
+> rejection, signature-tamper rejection, and QEMU/OVMF TPM wiring. The image
+> itself has never been booted. Secure Boot key enrollment, UKI-backed
+> command-line measurement, hardware provenance, event-log replay, transport
+> binding, and boot-policy admission remain unsolved, so neither green run
+> establishes a functioning production attestation system.
 >
 > Treat this as a work in progress, not a distribution.
 
@@ -31,11 +36,12 @@ Nothing is removed and nothing is patched. Four things go in on top:
 1. **`tpm2-tools` and `tpm2-tss`**, which the agent needs at runtime.
 2. **A kernel command line** at `/usr/lib/attestos/cmdline` carrying
    `lockdown=confidentiality` and `module.sig_enforce=1`.
-3. **`attestos-provision`**, a one-shot unit that creates an attestation key
-   inside the TPM at first boot and persists it, and reads the endorsement
-   certificate out of NV storage.
+3. **`attestos-provision`**, a one-shot unit that creates distinct persistent
+   RSA EK and AK identities inside the TPM and reads the endorsement
+   certificate out of NV storage when one exists.
 4. **`attestos-agent`**, socket-activated on loopback, which answers a
-   challenge with a TPM quote, the PCR values, and the TCG event log.
+   strict `attestos.tpm/v1` identity, activation, or quote challenge with raw
+   TPM evidence. The agent never returns a trust verdict.
 
 ## Why the base is Bazzite
 
@@ -137,9 +143,9 @@ their work.
 
 - Does the image build at all. Confirmed for commit `14e3a21` by GitHub Actions
   run `31143048491`; the build emitted two non-fatal DNF-state lint warnings.
-- How the running agent obtains a verified deployed-image identity. The current
-  build writes `unknown` because an OCI image cannot embed its own final digest
-  while it is being constructed.
+- How a verifier turns the agent's runtime `bootc status` deployment claim
+  into verified image identity. The claim is metadata, not signed authority;
+  on systems without `bootc` it is explicitly `unavailable`.
 - Which of the three UKI routes to take, given Bazzite excludes UKI kernels.
 - Is PCR 15 populated the way the design assumes on a bootc root.
 - Does MOK enrollment produce a PCR 7 value stable enough to write a policy
@@ -147,7 +153,10 @@ their work.
 - Would a vendor accept a MOK-enrolled key hierarchy at all.
 
 The runtime measurement questions require QEMU with OVMF and swtpm, which
-needs no additional hardware. Vendor acceptance requires a vendor conversation.
+needs no additional hardware. The wiring and raw TPM protocol mechanics have
+now passed there, but booting the built image and validating its event log and
+policy remain separate experiments. Vendor acceptance requires a vendor
+conversation.
 
 ## Licence
 

@@ -33,3 +33,22 @@ The build also demonstrated that the baked `/usr/lib/attestos/image-digest`
 value is `unknown`. Deployed-image identity must be obtained and verified at
 runtime or bound by an external manifest; this canary does not solve that
 protocol requirement.
+
+## Raw TPM protocol result
+
+The verifier repository later ran this image agent at commit
+`040e28d1f59d9297c2a712ed3929c2e18de78e34` against an isolated software TPM:
+
+- Result: pass
+- Run: https://github.com/plunder707/attested-gaming/actions/runs/31146444974
+- Verifier commit: `69221f2572a201b5bc480c977bb4a5cf3e0dbdd6`
+- Receipt SHA-256:
+  `bc7566238d0bb64587a98cdc3dbed7e622c0939d4a04f103bb4b257d751555ae`
+- Passed: MakeCredential/ActivateCredential, raw Quote/CheckQuote, challenge
+  replay rejection, signature-tamper rejection, and QEMU/OVMF/swtpm wiring
+- Explicitly false: manufacturer trust, boot-policy trust, and production trust
+
+That workflow did not boot the built Bazzite image. It proves that the
+provisioner, agent, wire schema, and verifier interoperate at the TPM mechanics
+layer. Hardware certificate validation, transport channel binding, event-log
+replay, UKI measurement, and policy admission remain closed.
