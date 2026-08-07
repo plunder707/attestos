@@ -80,3 +80,32 @@ remains the UKI engineering candidate.
 
 The candidate selection and its admission test are frozen in
 [`UKI_BASE_DECISION.md`](UKI_BASE_DECISION.md).
+
+## Result
+
+Run [31157890393](https://github.com/plunder707/attestos/actions/runs/31157890393)
+passed at source head `891a884` (GitHub pull-request merge commit
+`f448bbba77d2f22b0d9cec184669a2c94632e489`). The downloaded receipt SHA-256
+is `ad5ef12592cb5f4d1dfa8f0da88148931d48f0e6018924b2de4c766e1523ddaf`.
+
+Observed mechanics:
+
+- one guest marker was emitted and validated;
+- the guest booted through EFI with a fresh swtpm;
+- provisioning created readable persistent EK and AK handles;
+- the installed agent produced a quote that `tpm2_checkquote` accepted;
+- the quote carried exactly SHA-256 PCRs 7, 11, 12, and 15;
+- the TCG firmware event log and bootc deployment claim were present; and
+- manufacturer, policy, and production trust remained false.
+
+Observed Bazzite policy blockers:
+
+- `uki_file_count=0`;
+- no systemd-stub EFI variable;
+- no `lockdown=confidentiality` or `module.sig_enforce=1` on the running
+  command line;
+- no systemd userspace TPM event log; and
+- PCRs 11, 12, and 15 were all zero.
+
+Verdict: mechanics gate passed; Bazzite policy gate held. The next experiment
+is the separately admitted UKI-capable base canary.

@@ -10,19 +10,25 @@ This repository is the image that produces the evidence.
 
 ---
 
-> ## STATUS: CONTAINER AND RAW TPM MECHANICS VERIFIED. BOOTED-IMAGE CANARY PENDING.
+> ## STATUS: BOOTED RAW TPM MECHANICS VERIFIED. UKI/POLICY TRUST BLOCKED.
 >
 > GitHub Actions run
-> [31143048491](https://github.com/plunder707/attestos/actions/runs/31143048491)
-> built and rechunked commit `14e3a21` successfully against the Bazzite base.
+> [31157890393](https://github.com/plunder707/attestos/actions/runs/31157890393)
+> built a Bazzite-derived QCOW2, booted it under QEMU/OVMF with swtpm and no
+> guest network, provisioned persistent EK/AK handles, and verified a raw quote
+> over SHA-256 PCRs 7, 11, 12, and 15 from inside the guest. Its bounded receipt
+> has SHA-256 `ad5ef12592cb5f4d1dfa8f0da88148931d48f0e6018924b2de4c766e1523ddaf`.
 > A separate verifier workflow
 > [31146444974](https://github.com/plunder707/attested-gaming/actions/runs/31146444974)
 > exercised this repository's agent at commit `040e28d` against an isolated
 > software TPM and passed AK enrollment, raw quote verification, replay
-> rejection, signature-tamper rejection, and QEMU/OVMF TPM wiring. The image
-> itself has never been booted. Secure Boot key enrollment, UKI-backed
+> rejection, signature-tamper rejection, and QEMU/OVMF TPM wiring.
+>
+> The booted result also confirms the Bazzite policy blocker: no UKI file or
+> systemd-stub signal was present, the intended lockdown arguments were absent,
+> and PCRs 11, 12, and 15 remained zero. Secure Boot key enrollment, UKI-backed
 > command-line measurement, hardware provenance, event-log replay, transport
-> binding, and boot-policy admission remain unsolved, so neither green run
+> binding, and boot-policy admission remain unsolved. Neither green run
 > establishes a functioning production attestation system.
 >
 > Treat this as a work in progress, not a distribution.
@@ -34,6 +40,7 @@ has no guest network, requests read-only repository permission, publishes no
 image, and leaves manufacturer, policy, and production trust false.
 The next UKI engineering candidate and its independent admission criteria are
 recorded in [`UKI_BASE_DECISION.md`](UKI_BASE_DECISION.md).
+The milestone order and stop rules are tracked in [`ROADMAP.md`](ROADMAP.md).
 
 ---
 
@@ -156,8 +163,8 @@ their work.
 - How a verifier turns the agent's runtime `bootc status` deployment claim
   into verified image identity. The claim is metadata, not signed authority;
   on systems without `bootc` it is explicitly `unavailable`.
-- Whether the Bazzite-derived QCOW2 passes the isolated booted-image evidence
-  canary without confusing mechanics with policy.
+- The Bazzite-derived QCOW2 passes the isolated mechanics canary, but its
+  negative UKI and lockdown observations hold it from policy admission.
 - Whether Bluefin LTS/CentOS bootc actually boots the intended signed UKI with
   the attestos command line embedded and measured. Package presence alone is
   insufficient.
