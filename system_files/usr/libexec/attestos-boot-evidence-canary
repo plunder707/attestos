@@ -25,6 +25,9 @@ SERIAL = Path("/dev/ttyS0")
 STATE = Path("/var/lib/attestos")
 FIRMWARE_LOG = Path("/sys/kernel/security/tpm0/binary_bios_measurements")
 SYSTEMD_LOG = Path("/run/log/systemd/tpm2-measure.log")
+EFI_VARS = Path("/sys/firmware/efi/efivars")
+MAX_CANARY_LOG_BYTES = 512 * 1024
+MAX_UKI_FILES = 8
 
 
 def run(*args: str, timeout: int = 30, check: bool = True) -> subprocess.CompletedProcess:
@@ -84,7 +87,7 @@ def handle_available(handle: str) -> bool:
     return run("tpm2_readpublic", "-Q", "-c", handle, check=False).returncode == 0
 
 
-def quote_self_check() -> tuple[bool, dict[int, str]]:
+def quote_self_check() -> tuple[bool, dict[int, str], dict[str, str]]:
     request_id = secrets.token_hex(16)
     enrollment_id = secrets.token_hex(16)
     nonce = secrets.token_bytes(32)
@@ -136,7 +139,95 @@ def quote_self_check() -> tuple[bool, dict[int, str]]:
         pcr: pcr_blob[index * 32:(index + 1) * 32].hex()
         for index, pcr in enumerate(PCRS)
     }
-    return proc.returncode == 0, values
+    payloads = {}
+    total = 0
+    for item in response.get("event_logs", []):
+        source = item.get("source")
+        encoded = item.get("data_b64")
+        if not isinstance(source, str) or not isinstance(encoded, str):
+            continue
+        decoded = base64.b64decode(encoded, validate=True)
+        total += len(decoded)
+        if total > MAX_CANARY_LOG_BYTES:
+            raise RuntimeError("event-log payloads exceed the canary bound")
+        payloads[source] = encoded
+    return proc.returncode == 0, values, payloads
+
+
+def efi_variable(name: str) -> bytes | None:
+    matches = sorted(EFI_VARS.glob(f"{name}-*"))
+    if len(matches) != 1:
+        return None
+    try:
+        data = matches[0].read_bytes()
+    except OSError:
+        return None
+    return data[4:] if len(data) > 4 else None
+
+
+def efi_text(name: str) -> str | None:
+    data = efi_variable(name)
+    if not data:
+        return None
+    for encoding in ("utf-16-le", "utf-8"):
+        try:
+            value = data.decode(encoding).rstrip("\x00").strip()
+        except UnicodeDecodeError:
+            continue
+        if value:
+            return value
+    return None
+
+
+def secure_boot_enabled() -> bool:
+    data = efi_variable("SecureBoot")
+    return bool(data and data[0] == 1)
+
+
+def embedded_cmdline(path: Path) -> dict:
+    with tempfile.TemporaryDirectory(prefix="attestos-uki-cmdline-") as tmp:
+        output = Path(tmp) / "cmdline"
+        proc = run(
+            "objcopy", "--dump-section", f".cmdline={output}", str(path),
+            timeout=30,
+            check=False,
+        )
+        if proc.returncode != 0 or not output.is_file():
+            return {
+                "available": False,
+                "sha256": None,
+                "lockdown_confidentiality_present": False,
+                "module_sig_enforce_present": False,
+            }
+        raw = output.read_bytes().rstrip(b"\x00")
+    text = raw.decode("utf-8", errors="replace").strip()
+    words = text.split()
+    return {
+        "available": True,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "lockdown_confidentiality_present": "lockdown=confidentiality" in words,
+        "module_sig_enforce_present": "module.sig_enforce=1" in words,
+    }
+
+
+def uki_evidence(loader_identifier: str | None) -> list[dict]:
+    paths = set()
+    for root in (Path("/boot/efi/EFI/Linux"), Path("/efi/EFI/Linux"),
+                 Path("/boot/EFI/Linux"), Path("/usr/lib/modules")):
+        if root.is_dir():
+            paths.update(path for path in root.rglob("*.efi") if path.is_file())
+    normalized_loader = (loader_identifier or "").replace("\\", "/").lower()
+    records = []
+    for path in sorted(paths, key=lambda item: str(item))[:MAX_UKI_FILES]:
+        records.append({
+            "path": str(path),
+            "size_bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "matches_loader_identifier": bool(
+                normalized_loader and path.name.lower() in normalized_loader),
+            "embedded_cmdline": embedded_cmdline(path),
+        })
+    return records
 
 
 def bootc_claim() -> dict:
@@ -169,9 +260,10 @@ def collect() -> dict:
 
     quote_valid = False
     pcr_values: dict[int, str] = {}
+    event_log_payloads: dict[str, str] = {}
     if tpm_device and provision_active and ek_handle and ak_handle:
         try:
-            quote_valid, pcr_values = quote_self_check()
+            quote_valid, pcr_values, event_log_payloads = quote_self_check()
         except Exception as exc:  # The receipt must survive a failed probe.
             errors.append(f"quote_self_check: {exc}")
 
@@ -179,8 +271,8 @@ def collect() -> dict:
     firmware = log_metadata(FIRMWARE_LOG)
     systemd = log_metadata(SYSTEMD_LOG)
     efi_available = Path("/sys/firmware/efi").is_dir()
-    stub_variables = list(Path("/sys/firmware/efi/efivars").glob("StubInfo-*"))
-    uki_files = list(Path("/boot/EFI/Linux").glob("*.efi"))
+    loader_identifier = efi_text("LoaderImageIdentifier")
+    uki_files = uki_evidence(loader_identifier)
     deployment = bootc_claim()
     required_state = all((STATE / name).is_file() for name in (
         "ek.pem", "ak.pem", "ak.name",
@@ -211,11 +303,17 @@ def collect() -> dict:
         },
         "pcr_values": {"sha256": {str(k): v for k, v in pcr_values.items()}},
         "event_logs": {"tcg_firmware": firmware, "systemd_tpm2_measure": systemd},
+        "event_log_payloads": event_log_payloads,
         "deployment": deployment,
         "boot": {
             "efi_available": efi_available,
-            "stub_info_variable_present": bool(stub_variables),
+            "secure_boot_enabled": secure_boot_enabled(),
+            "stub_info_variable_present": efi_variable("StubInfo") is not None,
+            "stub_pcr_kernel_image_variable_present": (
+                efi_variable("StubPcrKernelImage") is not None),
+            "loader_image_identifier": loader_identifier,
             "uki_file_count": len(uki_files),
+            "uki_files": uki_files,
             "cmdline_sha256": hashlib.sha256(cmdline.encode("utf-8")).hexdigest(),
             "lockdown_confidentiality_present": "lockdown=confidentiality" in cmdline.split(),
             "module_sig_enforce_present": "module.sig_enforce=1" in cmdline.split(),

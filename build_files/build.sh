@@ -7,9 +7,17 @@ cp -avf "/ctx/system_files"/. /
 ### Packages the agent needs at runtime.
 # tpm2-tools provides tpm2_quote, tpm2_pcrread, tpm2_createak and tpm2_nvread.
 # tpm2-tss is the stack underneath them.
-dnf5 install -y tpm2-tools tpm2-tss
+if command -v dnf5 >/dev/null 2>&1; then
+    package_manager=dnf5
+elif command -v dnf >/dev/null 2>&1; then
+    package_manager=dnf
+else
+    echo "attestos: base image has neither dnf5 nor dnf" >&2
+    exit 1
+fi
+"${package_manager}" install -y binutils tpm2-tools tpm2-tss
 
-### Kernel command line, recorded for the UKI build.
+### Vendor kernel command line under test.
 #
 # This is the load-bearing configuration. lockdown=confidentiality blocks
 # /dev/mem, kprobes against a live kernel, and unsigned module loading.
@@ -22,6 +30,7 @@ dnf5 install -y tpm2-tools tpm2-tss
 install -D -m 0444 /dev/stdin /usr/lib/attestos/cmdline <<'CMDLINE'
 lockdown=confidentiality module.sig_enforce=1 rd.shell=0 rd.emergency=halt
 CMDLINE
+install -D -m 0444 /usr/lib/attestos/cmdline /usr/lib/kernel/cmdline
 
 ### Record which image this is, so the running system can name itself.
 echo "${IMAGE_DIGEST:-unknown}" > /usr/lib/attestos/image-digest

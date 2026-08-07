@@ -1,5 +1,8 @@
 # attestos
 
+**SOURCE MECHANICS PREVIEW. THE CURRENT BAZZITE CANARY BOOTED NO UKI AND
+LEFT PCRS 11 AND 15 AT ZERO; THIS DOES NOT ATTEST THE OPERATING SYSTEM.**
+
 Bazzite with a TPM boot attestation layer on top, so an anti-cheat vendor can
 verify what the machine actually booted instead of checking whether the distro
 name is on a list.
@@ -37,12 +40,21 @@ This repository is the image that produces the evidence.
 >
 > This source is available for review and reproducible emulation. No GHCR
 > image is published and it is not an installable trusted distribution.
+>
+> The separate standard Bluefin LTS experiment reached a stronger negative
+> result in [run 31172682511](https://github.com/plunder707/attestos/actions/runs/31172682511):
+> Secure Boot was enabled and a UKI candidate existed on disk, but firmware
+> booted shim/GRUB plus a separate kernel and initramfs. No UKI was identified
+> as loaded, PCRs 11 and 15 remained zero, and the policy command line was
+> absent. Standard Bluefin LTS is therefore held rather than selected.
 
 The completed Bazzite experiment is specified in
 [`BOOTED_IMAGE_CANARY.md`](BOOTED_IMAGE_CANARY.md). Reproduction and source
 build instructions are in [`BUILDING.md`](BUILDING.md). The next UKI
 engineering candidate and its independent admission criteria are recorded in
 [`UKI_BASE_DECISION.md`](UKI_BASE_DECISION.md).
+The executable candidate contract is
+[`UKI_ADMISSION_CANARY.md`](UKI_ADMISSION_CANARY.md).
 The milestone order and stop rules are tracked in [`ROADMAP.md`](ROADMAP.md).
 
 ---

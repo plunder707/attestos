@@ -31,7 +31,7 @@ which is a valid baseline when no external command-line inputs are supplied;
 it remains mandatory in the signed quote selection but is not independently a
 nonzero admission gate.
 
-## 2. UKI-capable base admission - next
+## 2. UKI-capable base admission - standard Bluefin LTS held
 
 - Build and boot the pinned Bluefin LTS/CentOS bootc candidate.
 - Prove the firmware selected the intended signed UKI.
@@ -43,6 +43,20 @@ nonzero admission gate.
 Stop if package presence is the only UKI evidence, the signature chain is
 unverified, event-log replay cannot reproduce the quote, or a substitution
 negative passes.
+
+Executable contract: [`UKI_ADMISSION_CANARY.md`](UKI_ADMISSION_CANARY.md) and
+`.github/workflows/uki-base-admission-canary.yml`. The initial development
+version is expected to hold until userspace event-log replay and two-deployment
+update/rollback checks are implemented; those are explicit false gates rather
+than TODOs interpreted as success.
+
+Evidence: run `31172682511` built and booted the ext4 candidate with Secure Boot
+enabled but followed shim/GRUB into a separate kernel and initramfs. A packaged
+UKI existed but was not selected, no systemd-stub identity was exposed, the
+policy command line was absent, and PCRs 11 and 15 remained zero. Standard
+Bluefin LTS therefore stops here. The next candidate decision must require an
+actual UKI boot path and post-install identity evidence, not merely a UKI
+package.
 
 ## 3. Policy verifier
 

@@ -23,16 +23,32 @@ if [[ ! -f "$disk" ]]; then
     exit 1
 fi
 
+secure_boot=${ATTESTOS_SECURE_BOOT:-off}
 ovmf_code=""
 ovmf_vars=""
-for candidate in \
-    /usr/share/OVMF/OVMF_CODE_4M.fd \
-    /usr/share/OVMF/OVMF_CODE.fd; do
+if [[ "$secure_boot" == "enforce" ]]; then
+  code_candidates=(
+    /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+    /usr/share/OVMF/OVMF_CODE.secboot.fd
+  )
+  vars_candidates=(
+    /usr/share/OVMF/OVMF_VARS_4M.ms.fd
+    /usr/share/OVMF/OVMF_VARS.ms.fd
+  )
+else
+  code_candidates=(
+    /usr/share/OVMF/OVMF_CODE_4M.fd
+    /usr/share/OVMF/OVMF_CODE.fd
+  )
+  vars_candidates=(
+    /usr/share/OVMF/OVMF_VARS_4M.fd
+    /usr/share/OVMF/OVMF_VARS.fd
+  )
+fi
+for candidate in "${code_candidates[@]}"; do
     [[ -f "$candidate" ]] && ovmf_code="$candidate" && break
 done
-for candidate in \
-    /usr/share/OVMF/OVMF_VARS_4M.fd \
-    /usr/share/OVMF/OVMF_VARS.fd; do
+for candidate in "${vars_candidates[@]}"; do
     [[ -f "$candidate" ]] && ovmf_vars="$candidate" && break
 done
 if [[ -z "$ovmf_code" || -z "$ovmf_vars" ]]; then
@@ -72,8 +88,15 @@ cleanup() {
 trap cleanup EXIT
 
 set +e
+machine="q35,accel=tcg,usb=off"
+secure_args=()
+if [[ "$secure_boot" == "enforce" ]]; then
+    machine+=",smm=on"
+    secure_args+=("-global" "driver=cfi.pflash01,property=secure,value=on")
+fi
+
 timeout --signal=TERM 25m qemu-system-x86_64 \
-    -machine q35,accel=tcg,usb=off \
+    -machine "$machine" \
     -cpu max \
     -smp 2 \
     -m 4096 \
@@ -83,6 +106,7 @@ timeout --signal=TERM 25m qemu-system-x86_64 \
     -nic none \
     -drive "if=pflash,format=raw,readonly=on,file=$ovmf_code" \
     -drive "if=pflash,format=raw,file=$vars" \
+    "${secure_args[@]}" \
     -chardev "socket,id=chrtpm,path=$socket" \
     -tpmdev emulator,id=tpm0,chardev=chrtpm \
     -device tpm-crb,tpmdev=tpm0 \
@@ -93,7 +117,7 @@ while kill -0 "$qemu_pid" >/dev/null 2>&1; do
     sleep 30
     serial_bytes=$(stat -c %s "$serial" 2>/dev/null || echo 0)
     firmware_resets=$(grep -a -c 'Reset System' "$serial" 2>/dev/null || true)
-    logins=$(grep -a -c 'bazzite login:' "$serial" 2>/dev/null || true)
+    logins=$(grep -a -E -c '[[:alnum:]_-]+ login:' "$serial" 2>/dev/null || true)
     provisions=$(grep -a -c 'Finished .*attestos-provision' "$serial" 2>/dev/null || true)
     markers=$(grep -a -c 'ATTESTOS_BOOT_EVIDENCE_V1=' "$serial" 2>/dev/null || true)
     printf 'guest_progress serial_bytes=%s firmware_resets=%s logins=%s provisions=%s markers=%s\n' \

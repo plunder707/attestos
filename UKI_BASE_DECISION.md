@@ -2,12 +2,12 @@
 
 Date: 2026-08-06
 
-Decision status: selected for the next UKI engineering canary; not selected as
-a production or gaming distribution base.
+Decision status: evaluated and held by the UKI engineering canary; not selected
+as a production or gaming distribution base.
 
 ## Selection
 
-Use `ghcr.io/ublue-os/bluefin-lts:stable` as the first UKI-capable desktop
+Use `ghcr.io/projectbluefin/bluefin:lts` as the first UKI-capable desktop
 candidate.
 
 The choice is based on current source, not branding:
@@ -23,11 +23,26 @@ The choice is based on current source, not branding:
 
 Primary source references:
 
-- [Bluefin LTS Containerfile](https://github.com/ublue-os/bluefin-lts/blob/main/Containerfile)
-- [Bluefin LTS kernel swap](https://github.com/ublue-os/bluefin-lts/blob/main/build_scripts/scripts/kernel-swap.sh)
+- [Bluefin LTS Containerfile](https://github.com/projectbluefin/bluefin-lts/blob/main/Containerfile)
+- [Bluefin LTS kernel swap](https://github.com/projectbluefin/bluefin-lts/blob/main/build_scripts/scripts/kernel-swap.sh)
 - [bootc UKI cleanup, merged](https://github.com/bootc-dev/bootc/pull/2200)
 - [bootc sealed-image design](https://github.com/bootc-dev/bootc/blob/main/docs/src/experimental-composefs.md)
 - [CentOS Stream kernel UKI package](https://gitlab.com/redhat/centos-stream/rpms/kernel/-/blob/c10s/kernel.spec)
+
+The former draft reference `ghcr.io/ublue-os/bluefin-lts:stable` is not the
+published image location. The workflow resolves the `projectbluefin` tag to a
+signed immutable multi-architecture index, verifies its exact GitHub Actions
+OIDC identity, and then binds the build to the sole Linux/amd64 child digest in
+that verified index.
+
+Bluefin's published supply-chain page describes LTS as key-based. The exact
+live `bluefin:lts` index resolved by the canary instead carried a Fulcio
+certificate for the Bluefin LTS GitHub workflow and passed exact-identity OIDC
+verification; the vendored repository key did not verify that object. This is
+an observed documentation/artifact mismatch, so the canary binds to the exact
+live index signature and preserves the signer identity rather than forcing the
+documented mode. OCI provenance, index-to-child membership, PE signature,
+booted Secure Boot state, and systemd-stub evidence remain separate gates.
 
 ## Why Bazzite is held
 
@@ -50,3 +65,19 @@ if a separately built and booted artifact proves:
 
 Until those checks pass, `policy_trusted=false` and the attestos base remains
 unchanged.
+
+## Measured decision
+
+Standard Bluefin LTS is not admitted. Run
+[`31172682511`](https://github.com/plunder707/attestos/actions/runs/31172682511)
+verified the signed OCI index, built an ext4 QCOW2, and booted it with Secure
+Boot enabled. It then observed shim and GRUB loading a separate kernel and
+initramfs rather than the packaged UKI. No systemd-stub variables were present,
+PCR 11 and PCR 15 were zero, and the approved policy arguments were absent from
+the embedded and runtime command lines.
+
+The `kernel-uki-virt` package therefore establishes only that a UKI candidate
+exists. It does not establish that firmware selects it. The container-stage and
+installed-guest candidate hashes also differed, so any future candidate must be
+inspected after disk construction and joined to the firmware-loaded identity,
+not inferred from the pre-install container alone.
