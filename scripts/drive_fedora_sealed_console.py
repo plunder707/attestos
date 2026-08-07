@@ -74,9 +74,14 @@ def main() -> int:
     parser.add_argument("--luks-passphrase-file", type=Path, required=True)
     parser.add_argument("--drive-seconds", type=int, default=960)
     parser.add_argument("--input-start", type=int, default=120)
-    parser.add_argument("--input-interval", type=int, default=60)
-    parser.add_argument("--screenshot-interval", type=int, default=120)
+    parser.add_argument("--input-interval", type=int, default=10)
+    parser.add_argument("--input-stop", type=int, default=210)
+    parser.add_argument("--screenshot-interval", type=int, default=30)
     args = parser.parse_args()
+    if not 0 <= args.input_start <= args.input_stop < args.drive_seconds:
+        raise ValueError("console input window must be ordered within the drive bound")
+    if args.input_interval <= 0 or args.screenshot_interval <= 0:
+        raise ValueError("console intervals must be positive")
 
     wait_for_socket(args.qmp)
     qmp = QMP(args.qmp)
@@ -86,22 +91,26 @@ def main() -> int:
         raise ValueError("LUKS passphrase contract must be ASCII alphanumeric text")
     started = time.monotonic()
     next_input = started + args.input_start
+    input_deadline = started + args.input_stop
     next_screenshot = started + args.screenshot_interval
     deadline = started + args.drive_seconds
     input_attempt = 0
     screenshot_attempt = 0
 
-    # Under TCG the LUKS prompt appears about two minutes after firmware starts
-    # the 247 MiB UKI. Disk construction and console input share one explicit,
-    # intentionally public canary passphrase contract. The installed probe is a
-    # systemd unit; typing shell commands on an assumed tty would be a false
-    # execution signal.
+    # Under TCG the LUKS prompt appears shortly after systemd-cryptsetup starts,
+    # but the observed prompt-to-emergency window is shorter than one minute.
+    # Send the shared public canary passphrase only across that bounded window;
+    # continuing after it closes would type into dracut's emergency shell and
+    # create a misleading execution signal.
     while time.monotonic() < deadline:
         now = time.monotonic()
-        time.sleep(max(0.0, min(next_input, next_screenshot, deadline) - now))
+        wake_at = min(next_screenshot, deadline)
+        if next_input is not None:
+            wake_at = min(wake_at, next_input)
+        time.sleep(max(0.0, wake_at - now))
         elapsed = int(time.monotonic() - started)
         try:
-            if time.monotonic() >= next_input:
+            if next_input is not None and time.monotonic() >= next_input:
                 qmp.type_text(luks_passphrase)
                 input_attempt += 1
                 print(
@@ -110,6 +119,8 @@ def main() -> int:
                     flush=True,
                 )
                 next_input += args.input_interval
+                if next_input > input_deadline:
+                    next_input = None
             if time.monotonic() >= next_screenshot:
                 screenshot_attempt += 1
                 screenshot = args.output_dir / f"screen-{elapsed:04d}s.ppm"

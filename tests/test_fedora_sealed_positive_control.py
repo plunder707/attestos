@@ -565,7 +565,11 @@ def test_console_driver_uses_shared_luks_contract_across_slow_tcg_boot():
     source = (ROOT / "scripts/drive_fedora_sealed_console.py").read_text()
     assert 'default=960' in source
     assert 'default=120' in source
-    assert 'default=60' in source
+    assert '"--input-interval", type=int, default=10' in source
+    assert '"--input-stop", type=int, default=210' in source
+    assert '"--screenshot-interval", type=int, default=30' in source
+    assert "if next_input > input_deadline" in source
+    assert "next_input = None" in source
     assert 'qmp.type_text(luks_passphrase)' in source
     assert "ctrl-alt-f9" not in source
     assert "console_probe_attempt" not in source

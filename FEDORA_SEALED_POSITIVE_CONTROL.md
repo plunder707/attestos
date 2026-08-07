@@ -118,7 +118,10 @@ evidence and is not used as a bypass.
 The disposable encrypted root uses the intentionally public passphrase in
 `canary/fedora-sealed/public-luks-passphrase.txt`. Disk creation and the QMP
 console driver consume that same file. It exists only to cross the interactive
-initramfs boundary in CI and provides no confidentiality or trust claim.
+initramfs boundary in CI and provides no confidentiality or trust claim. The
+driver submits it at ten-second intervals only during the observed TCG prompt
+window and stops before dracut's emergency shell; framebuffer captures remain
+diagnostic evidence and are never treated as proof that the volume unlocked.
 
 The evidence probe is carried on a second block device. A tracked one-shot unit
 and the probe script are installed in the machine-local mutable `/etc` only
