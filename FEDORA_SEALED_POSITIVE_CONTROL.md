@@ -84,7 +84,7 @@ key, replacement UKI, or modified firmware trust store exists in the active
 canary.
 
 This historical candidate replaces the August 3 image after three fail-closed
-runs proved that image internally inconsistent for installation. Its UKI
+runs proved that the image was internally inconsistent for installation. Its UKI
 contained composefs digest `6bd4...f996b43`, while both its own bootc and the
 exact tools image used during its build computed storage-ingest digest
 `1df3...f839de`. Matching the bootc version was therefore tested and disproved
@@ -122,8 +122,9 @@ initramfs unlock on TCG. The QMP console driver is observation-only and records
 framebuffers; it never types into the guest or supplies evidence authority.
 
 The evidence probe is carried on a second block device. A tracked one-shot unit
-and the probe script are installed in the machine-local mutable `/etc` only
-after static UKI inspection; they never enter the sealed `/usr` tree or alter
+and the probe script are installed in the selected OSTree deployment's
+machine-local mutable `/etc` only after static UKI inspection; they never enter
+the sealed `/usr` tree or alter
 the signed UKI whose identity is measured into PCR 11. The unit reads EFI
 variables, hashes the firmware-identified UKI, reads PCR 11 directly from the
 guest TPM device, writes one receipt back to the probe disk, and powers off.

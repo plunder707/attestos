@@ -35,25 +35,30 @@ cp scripts/fedora_sealed_guest_probe.py "$probe_root/fedora_sealed_guest_probe.p
 truncate -s 64M "$probe"
 mke2fs -q -t ext4 -F -d "$probe_root" "$probe"
 
+cleanup() {
+    set +e
+    [[ -n "${driver_pid:-}" ]] && kill "$driver_pid" >/dev/null 2>&1
+    [[ -n "${qemu_pid:-}" ]] && kill "$qemu_pid" >/dev/null 2>&1
+    if [[ -n "${swtpm_pid:-}" && -r "/proc/$swtpm_pid/cmdline" ]]; then
+        swtpm_cmdline=$(tr '\0' ' ' < "/proc/$swtpm_pid/cmdline")
+        if [[ "$swtpm_cmdline" == *"swtpm socket"* && "$swtpm_cmdline" == *"$tpm_socket"* ]]; then
+            kill "$swtpm_pid" >/dev/null 2>&1
+        fi
+    fi
+}
+trap cleanup EXIT
+
 swtpm socket \
     --tpm2 \
     --tpmstate "dir=$state" \
     --ctrl "type=unixio,path=$tpm_socket" \
-    --flags startup-clear \
-    --daemon
+    --flags startup-clear &
+swtpm_pid=$!
 for _ in $(seq 1 50); do
     [[ -S "$tpm_socket" ]] && break
     sleep 0.1
 done
 [[ -S "$tpm_socket" ]] || { echo "swtpm socket did not become ready" >&2; exit 1; }
-
-cleanup() {
-    set +e
-    [[ -n "${driver_pid:-}" ]] && kill "$driver_pid" >/dev/null 2>&1
-    [[ -n "${qemu_pid:-}" ]] && kill "$qemu_pid" >/dev/null 2>&1
-    pkill -f "swtpm socket.*$tpm_socket" >/dev/null 2>&1
-}
-trap cleanup EXIT
 
 set +e
 timeout --signal=TERM 18m qemu-system-x86_64 \

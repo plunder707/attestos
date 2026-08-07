@@ -497,6 +497,10 @@ def test_workflow_and_runner_preserve_isolation_and_nonpublication():
     assert "id-token: write" not in workflow
     assert "-nic none" in runner
     assert "accel=tcg" in runner
+    assert "swtpm_pid=$!" in runner
+    assert 'kill "$swtpm_pid"' in runner
+    assert "--daemon" not in runner
+    assert "pkill" not in runner
     assert "-enable-kvm" not in runner
     assert "--network=none" in (
         ROOT / "scripts/build_fedora_sealed_disk.sh"
@@ -602,9 +606,11 @@ def test_probe_unit_is_explicitly_outside_sealed_usr_and_non_authoritative():
     ).read_text()
     assert "scripts/inspect_fedora_sealed_disk.py" in builder
     assert builder.index("scripts/inspect_fedora_sealed_disk.py") < builder.index(
-        'probe_dir="$mount_root/etc/attestos-positive-control"'
+        'probe_dir="$deployment_root/etc/attestos-positive-control"'
     )
-    assert "mutable_etc_outside_sealed_usr" in builder
+    assert "expected exactly one OSTree deployment" in builder
+    assert 'unit_dir="$deployment_root/etc/systemd/system"' in builder
+    assert "selected_ostree_deployment_etc_outside_sealed_usr" in builder
     assert "affects_static_uki_identity: false" in builder
     assert "manufacturer_trusted: false" in builder
     assert "policy_trusted: false" in builder

@@ -109,11 +109,27 @@ sudo python3 scripts/inspect_fedora_sealed_disk.py \
     --installer-reference "$installer_reference" \
     --output "$output/static-inspection.json"
 
+# The physical partition root is not the root systemd enters. OSTree remaps the
+# selected deployment at boot, including that deployment's writable /etc.
+# Require the single fresh-install deployment explicitly so a probe can never be
+# placed in an inactive deployment or the physical root by accident.
+deployment_roots=()
+while IFS= read -r candidate; do
+    deployment_roots+=("$candidate")
+done < <(sudo find "$mount_root/ostree/deploy" \
+    -mindepth 3 -maxdepth 3 -type d -path '*/deploy/*.*' -print | sort)
+[[ ${#deployment_roots[@]} -eq 1 ]] || {
+    echo "expected exactly one OSTree deployment, found ${#deployment_roots[@]}" >&2
+    exit 1
+}
+deployment_root=${deployment_roots[0]}
+deployment_relative=${deployment_root#"$mount_root"}
+
 # The positive-control probe is machine-local test instrumentation. It is
 # installed only after the signed UKI has been inspected and never enters the
 # sealed /usr tree or the PCR 11 identity under test.
-probe_dir="$mount_root/etc/attestos-positive-control"
-unit_dir="$mount_root/etc/systemd/system"
+probe_dir="$deployment_root/etc/attestos-positive-control"
+unit_dir="$deployment_root/etc/systemd/system"
 sudo install -d -m 0755 "$probe_dir" "$unit_dir/multi-user.target.wants"
 sudo install -m 0644 \
     scripts/fedora_sealed_guest_probe.py \
@@ -127,9 +143,11 @@ sudo ln -sfn \
 jq -n \
     --arg probe_sha256 "$(sha256sum scripts/fedora_sealed_guest_probe.py | cut -d' ' -f1)" \
     --arg unit_sha256 "$(sha256sum canary/fedora-sealed/fedora-sealed-positive-control.service | cut -d' ' -f1)" \
+    --arg deployment_root "$deployment_relative" \
     '{
       format: "attestos.fedora_sealed_probe_install/v1",
-      location: "mutable_etc_outside_sealed_usr",
+      location: "selected_ostree_deployment_etc_outside_sealed_usr",
+      deployment_root: $deployment_root,
       probe_sha256: $probe_sha256,
       unit_sha256: $unit_sha256,
       affects_static_uki_identity: false,
