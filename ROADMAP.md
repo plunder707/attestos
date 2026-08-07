@@ -50,7 +50,7 @@ version is expected to hold until userspace event-log replay and two-deployment
 update/rollback checks are implemented; those are explicit false gates rather
 than TODOs interpreted as success.
 
-Evidence: run `31170696765` built and booted the ext4 candidate with Secure Boot
+Evidence: run `31172682511` built and booted the ext4 candidate with Secure Boot
 enabled but followed shim/GRUB into a separate kernel and initramfs. A packaged
 UKI existed but was not selected, no systemd-stub identity was exposed, the
 policy command line was absent, and PCRs 11 and 15 remained zero. Standard

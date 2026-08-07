@@ -42,7 +42,7 @@ This repository is the image that produces the evidence.
 > image is published and it is not an installable trusted distribution.
 >
 > The separate standard Bluefin LTS experiment reached a stronger negative
-> result in [run 31170696765](https://github.com/plunder707/attestos/actions/runs/31170696765):
+> result in [run 31172682511](https://github.com/plunder707/attestos/actions/runs/31172682511):
 > Secure Boot was enabled and a UKI candidate existed on disk, but firmware
 > booted shim/GRUB plus a separate kernel and initramfs. No UKI was identified
 > as loaded, PCRs 11 and 15 remained zero, and the policy command line was

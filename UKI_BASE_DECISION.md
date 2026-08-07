@@ -69,7 +69,7 @@ unchanged.
 ## Measured decision
 
 Standard Bluefin LTS is not admitted. Run
-[`31170696765`](https://github.com/plunder707/attestos/actions/runs/31170696765)
+[`31172682511`](https://github.com/plunder707/attestos/actions/runs/31172682511)
 verified the signed OCI index, built an ext4 QCOW2, and booted it with Secure
 Boot enabled. It then observed shim and GRUB loading a separate kernel and
 initramfs rather than the packaged UKI. No systemd-stub variables were present,

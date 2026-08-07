@@ -51,7 +51,7 @@ evidence, not workflow noise.
 ## Standard Bluefin LTS result
 
 Run
-[`31170696765`](https://github.com/plunder707/attestos/actions/runs/31170696765)
+[`31172682511`](https://github.com/plunder707/attestos/actions/runs/31172682511)
 built and booted the immutable standard Bluefin LTS candidate with Secure Boot
 enabled, then correctly stopped at the final admission gate. Firmware followed
 shim and GRUB into a separate kernel and initramfs. The guest exposed no
@@ -68,12 +68,11 @@ not boot evidence. Static inspection found a PE signature but did not validate
 it against a carried certificate, so the signature and tamper gates remained
 closed.
 
-The run's firmware log replay initially reported a mismatch because the checker
+An earlier run's firmware log replay reported a mismatch because the checker
 converted `tpm2_eventlog`'s unquoted YAML hexadecimal integer to decimal text.
-Replaying the exact 35,024-byte artifact reproduces quoted PCR 7 after strict
-integer normalization. This checker repair requires a fresh sealed rerun; it
-does not change the base HOLD because the loaded-UKI and policy gates remain
-false.
+The final sealed run uses strict integer normalization and reproduces quoted
+PCR 7 from the exact 35,024-byte artifact. The repair does not change the base
+HOLD because the loaded-UKI and policy gates remain false.
 
 ## Isolation
 
