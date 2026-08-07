@@ -10,17 +10,18 @@ This repository is the image that produces the evidence.
 
 ---
 
-> ## STATUS: BOOTED RAW TPM MECHANICS VERIFIED. UKI/POLICY TRUST BLOCKED.
+> ## STATUS: SOURCE MECHANICS PREVIEW. UKI/POLICY TRUST BLOCKED.
 >
-> GitHub Actions run
+> GitHub Actions runs
 > [31157890393](https://github.com/plunder707/attestos/actions/runs/31157890393)
+> and [31159951490](https://github.com/plunder707/attestos/actions/runs/31159951490)
 > built a Bazzite-derived QCOW2, booted it under QEMU/OVMF with swtpm and no
 > guest network, provisioned persistent EK/AK handles, and verified a raw quote
 > over SHA-256 PCRs 7, 11, 12, and 15 from inside the guest. Its bounded receipt
 > has SHA-256 `ad5ef12592cb5f4d1dfa8f0da88148931d48f0e6018924b2de4c766e1523ddaf`.
 > A separate verifier workflow
-> [31146444974](https://github.com/plunder707/attested-gaming/actions/runs/31146444974)
-> exercised this repository's agent at commit `040e28d` against an isolated
+> [31160003873](https://github.com/plunder707/attested-gaming/actions/runs/31160003873)
+> exercised this repository's final agent commit `b918392` against an isolated
 > software TPM and passed AK enrollment, raw quote verification, replay
 > rejection, signature-tamper rejection, and QEMU/OVMF TPM wiring.
 >
@@ -31,15 +32,14 @@ This repository is the image that produces the evidence.
 > binding, and boot-policy admission remain unsolved. Neither green run
 > establishes a functioning production attestation system.
 >
-> Treat this as a work in progress, not a distribution.
+> This source is available for review and reproducible emulation. No GHCR
+> image is published and it is not an installable trusted distribution.
 
-The next experiment is specified in [`BOOTED_IMAGE_CANARY.md`](BOOTED_IMAGE_CANARY.md).
-It builds a local-only QCOW2 on a disposable GitHub runner, boots it with
-QEMU/OVMF and swtpm, and accepts only a bounded guest receipt. It uses TCG,
-has no guest network, requests read-only repository permission, publishes no
-image, and leaves manufacturer, policy, and production trust false.
-The next UKI engineering candidate and its independent admission criteria are
-recorded in [`UKI_BASE_DECISION.md`](UKI_BASE_DECISION.md).
+The completed Bazzite experiment is specified in
+[`BOOTED_IMAGE_CANARY.md`](BOOTED_IMAGE_CANARY.md). Reproduction and source
+build instructions are in [`BUILDING.md`](BUILDING.md). The next UKI
+engineering candidate and its independent admission criteria are recorded in
+[`UKI_BASE_DECISION.md`](UKI_BASE_DECISION.md).
 The milestone order and stop rules are tracked in [`ROADMAP.md`](ROADMAP.md).
 
 ---
@@ -131,15 +131,10 @@ engineer.
 
 ## Installing it
 
-Once there is a build worth installing, on an existing bootc system:
-
-```
-bootc switch ghcr.io/plunder707/attestos:latest
-systemctl reboot
-```
-
-No ISO and no USB stick. The system pulls the delta, stages the new image, and
-switches on reboot. `bootc rollback` returns you to the previous image.
+There is no supported installation command yet. In particular,
+`ghcr.io/plunder707/attestos:latest` is not published. The current preview is
+for source review and isolated QEMU/swtpm reproduction only. See
+[`BUILDING.md`](BUILDING.md).
 
 ## Layout
 
