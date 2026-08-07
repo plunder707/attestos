@@ -13,12 +13,11 @@ upstream_cert=$(realpath "$3")
 canary_key=$(realpath "$4")
 canary_cert=$(realpath "$5")
 source_reference=${ATTESTOS_FEDORA_IMAGE_REFERENCE:?missing immutable image reference}
-installer_reference=${ATTESTOS_FEDORA_INSTALLER_IMAGE_REFERENCE:?missing immutable installer reference}
 mount_root=$(mktemp -d -p /tmp attestos-fedora-compat.XXXXXX)
 nbd=""
 mkdir -p "$output"
 
-for command in jq objcopy openssl podman qemu-img qemu-nbd sbverify; do
+for command in jq objcopy openssl podman python3 qemu-img qemu-nbd; do
     command -v "$command" >/dev/null || {
         echo "missing required command: $command" >&2
         exit 1
@@ -96,7 +95,6 @@ sudo podman run \
     '
 sudo chown "$(id -u):$(id -g)" "$work/signed.efi"
 rm -f "$work/canary-signing.key"
-sbverify --cert "$canary_cert" "$work/signed.efi"
 objcopy --dump-section .cmdline="$work/signed.cmdline" "$work/signed.efi"
 cmp "$work/original.cmdline" "$work/signed.cmdline"
 [[ "$(sha256sum "$work/original.efi" | cut -d' ' -f1)" != \
@@ -105,19 +103,41 @@ cmp "$work/original.cmdline" "$work/signed.cmdline"
 sudo install -m 0644 "$work/signed.efi" "$uki"
 sync
 
-sudo python3 scripts/inspect_fedora_sealed_disk.py \
-    --esp "$mount_root" \
-    --certificate "$canary_cert" \
-    --source-reference "$source_reference" \
-    --installer-reference "$installer_reference" \
-    --output "$output/static-inspection.json"
-
 openssl x509 -in "$canary_cert" -outform DER > "$work/canary.der"
+signed_sha256=$(sha256sum "$work/signed.efi" | cut -d' ' -f1)
+signed_size=$(stat -c %s "$work/signed.efi")
+canary_cert_sha256=$(sha256sum "$work/canary.der" | cut -d' ' -f1)
+cmdline_sha256=$(python3 - "$work/signed.cmdline" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+print(hashlib.sha256(Path(sys.argv[1]).read_bytes().rstrip(b"\0")).hexdigest())
+PY
+)
+jq \
+    --arg signed_sha256 "$signed_sha256" \
+    --argjson signed_size "$signed_size" \
+    --arg certificate_sha256 "$canary_cert_sha256" \
+    '.uki.upstream_sha256 = .uki.sha256 |
+     .uki.upstream_signature_verified = .uki.signature_verified |
+     .uki.upstream_tamper_rejected = .uki.tampered_cmdline_signature_rejected |
+     .uki.sha256 = $signed_sha256 |
+     .uki.size_bytes = $signed_size |
+     .uki.certificate_sha256 = $certificate_sha256 |
+     .uki.signature_verified = false |
+     .uki.signature_prepared = true |
+     .uki.signature_tool = "systemd-sbsign_from_immutable_source" |
+     .uki.signature_verification_mode = "secure_boot_firmware_admission" |
+     .uki.tampered_cmdline_signature_rejected = false |
+     .uki.tampered_cmdline_firmware_rejected = false' \
+    "$output/upstream-static-inspection.json" > "$output/static-inspection.json"
+
 jq -n \
     --arg original_sha256 "$(sha256sum "$work/original.efi" | cut -d' ' -f1)" \
     --arg resigned_sha256 "$(sha256sum "$work/signed.efi" | cut -d' ' -f1)" \
-    --arg cmdline_sha256 "$(sha256sum "$work/signed.cmdline" | cut -d' ' -f1)" \
-    --arg certificate_sha256 "$(sha256sum "$work/canary.der" | cut -d' ' -f1)" \
+    --arg cmdline_sha256 "$cmdline_sha256" \
+    --arg certificate_sha256 "$canary_cert_sha256" \
     --arg key_bits "$(openssl x509 -in "$canary_cert" -noout -text | sed -n 's/.*Public-Key: (\([0-9][0-9]*\) bit).*/\1/p' | head -1)" \
     '{
       format: "attestos.fedora_sealed_compat_resign/v1",
@@ -128,6 +148,8 @@ jq -n \
       embedded_cmdline_sha256: $cmdline_sha256,
       canary_certificate_sha256: $certificate_sha256,
       canary_rsa_bits: ($key_bits | tonumber),
+      signature_tool: "systemd-sbsign_from_immutable_source",
+      signature_verification_mode: "secure_boot_firmware_admission",
       private_key_persisted: false,
       manufacturer_trusted: false,
       policy_trusted: false,

@@ -17,7 +17,8 @@ these joined observations:
 4. the original UKI verifies against the pinned upstream development Secure
    Boot key but its frozen RSA-4096 signature is rejected by the matched OVMF
    firmware;
-5. changing its embedded `.cmdline` invalidates the PE signature;
+5. changing its embedded `.cmdline` causes Secure Boot firmware to reject a
+   throwaway copy;
 6. a run-local RSA-2048 compatibility signature preserves the exact embedded
    command line and is enrolled only in a copied variable store;
 7. the compatibility-signed guest reports both `systemd-boot` and
@@ -79,8 +80,11 @@ exact upstream db certificate is enrolled. The certificate uses RSA-4096. This
 is retained as a bounded negative admission receipt, not tuned away. A second
 arm adds a fresh RSA-2048 test certificate to a copy of the same variable
 store, adds a compatibility Authenticode signature with the pinned Fedora
-image's own `systemd-sbsign`, and proves that the
-embedded command line is byte-identical before boot. Its private key is deleted
+image's own `systemd-sbsign`, and proves that the embedded command line is
+byte-identical before boot. Ubuntu's older `sbverify` cannot parse this large
+UKI reliably, so the compatibility signature is not labeled statically
+verified: the canary requires firmware to reject a tampered overlay and admit
+the exact untampered hash instead. Its private key is deleted
 before artifacts are collected. That arm is a harness compatibility control;
 it cannot establish that the original upstream signature is firmware-admissible.
 

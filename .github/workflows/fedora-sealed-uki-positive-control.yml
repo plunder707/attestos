@@ -14,6 +14,7 @@ on:
       - 'scripts/fedora_sealed_guest_probe.py'
       - 'scripts/inspect_fedora_sealed_disk.py'
       - 'scripts/run_fedora_sealed_positive_control.sh'
+      - 'scripts/tamper_fedora_sealed_uki.sh'
       - 'scripts/validate_fedora_sealed_positive_control.py'
       - 'tests/test_fedora_sealed_positive_control.py'
       - 'FEDORA_SEALED_POSITIVE_CONTROL.md'
@@ -90,6 +91,7 @@ jobs:
           bash -n scripts/build_fedora_sealed_disk.sh
           bash -n scripts/prepare_fedora_sealed_compat_control.sh
           bash -n scripts/run_fedora_sealed_positive_control.sh
+          bash -n scripts/tamper_fedora_sealed_uki.sh
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -243,7 +245,7 @@ jobs:
 
       - name: Confirm frozen upstream UKI admission rejection
         run: |
-          set -uo pipefail
+          set -euo pipefail
           qemu-img create \
             -f qcow2 \
             -F qcow2 \
@@ -323,6 +325,34 @@ jobs:
           echo "ATTESTOS_FEDORA_OVMF_VARS=$PWD/fedora-output/OVMF_VARS_COMPAT.fd" \
             >> "$GITHUB_ENV"
 
+      - name: Confirm compatibility signature tamper rejection
+        run: |
+          set -euo pipefail
+          qemu-img create \
+            -f qcow2 \
+            -F qcow2 \
+            -b "$PWD/fedora-output/fedora-sealed.qcow2" \
+            fedora-output/compat-tamper.qcow2
+          bash scripts/tamper_fedora_sealed_uki.sh \
+            fedora-output/compat-tamper.qcow2 \
+            fedora-output/static-inspection.json \
+            fedora-output/compat-tamper
+          set +e
+          bash scripts/run_fedora_sealed_positive_control.sh \
+            fedora-output/compat-tamper.qcow2 \
+            fedora-output/compat-tamper/boot
+          rc=$?
+          set -e
+          [[ $rc -eq 80 ]]
+          jq '.firmware_rejected = true' \
+            fedora-output/compat-tamper/tamper-preboot.json \
+            > fedora-output/compat-tamper/tamper-admission.json
+          tmp=$(mktemp)
+          jq '.uki.tampered_cmdline_firmware_rejected = true' \
+            fedora-output/static-inspection.json > "$tmp"
+          mv "$tmp" fedora-output/static-inspection.json
+          rm -f fedora-output/compat-tamper.qcow2
+
       - name: Boot networkless compatibility control and collect evidence
         run: |
           set -euxo pipefail
@@ -337,6 +367,8 @@ jobs:
             --static fedora-output/static-inspection.json \
             --guest fedora-output/compat-boot/guest-evidence.json \
             --provenance fedora-output/provenance.json \
+            --compatibility fedora-output/compat-resign.json \
+            --tamper fedora-output/compat-tamper/tamper-admission.json \
             --output fedora-output/positive-control.json
 
       - name: Upload bounded positive-control evidence
@@ -361,6 +393,9 @@ jobs:
             fedora-output/upstream-admission/serial.log
             fedora-output/compat-resign.json
             fedora-output/compat-firmware-vars.json
+            fedora-output/compat-tamper/tamper-preboot.json
+            fedora-output/compat-tamper/tamper-admission.json
+            fedora-output/compat-tamper/boot/serial.log
             fedora-output/canary-signing.pem
             fedora-output/canary-signing.der
             fedora-output/static-inspection.json
@@ -381,5 +416,7 @@ jobs:
             --static fedora-output/static-inspection.json \
             --guest fedora-output/compat-boot/guest-evidence.json \
             --provenance fedora-output/provenance.json \
+            --compatibility fedora-output/compat-resign.json \
+            --tamper fedora-output/compat-tamper/tamper-admission.json \
             --output fedora-output/positive-control.json \
             --enforce

@@ -49,8 +49,14 @@ def static_evidence() -> dict:
         "uki": {
             "uefi_path": "\\EFI\\Linux\\fedora.efi",
             "sha256": UKI,
-            "signature_verified": True,
-            "tampered_cmdline_signature_rejected": True,
+            "upstream_sha256": "c" * 64,
+            "embedded_cmdline_sha256": "b" * 64,
+            "certificate_sha256": "d" * 64,
+            "signature_verified": False,
+            "signature_prepared": True,
+            "signature_tool": "systemd-sbsign_from_immutable_source",
+            "signature_verification_mode": "secure_boot_firmware_admission",
+            "tampered_cmdline_firmware_rejected": True,
         },
         "manufacturer_trusted": False,
         "policy_trusted": False,
@@ -82,8 +88,42 @@ def provenance() -> dict:
     return {"image_reference": IMAGE, "installer_reference": INSTALLER}
 
 
+def compatibility_evidence() -> dict:
+    return {
+        "format": "attestos.fedora_sealed_compat_resign/v1",
+        "purpose": "harness_compatibility_positive_control_only",
+        "original_uki_sha256": "c" * 64,
+        "compatibility_signed_uki_sha256": UKI,
+        "embedded_cmdline_sha256": "b" * 64,
+        "canary_certificate_sha256": "d" * 64,
+        "canary_rsa_bits": 2048,
+        "signature_tool": "systemd-sbsign_from_immutable_source",
+        "signature_verification_mode": "secure_boot_firmware_admission",
+        "private_key_persisted": False,
+        "manufacturer_trusted": False,
+        "policy_trusted": False,
+        "production_trusted": False,
+    }
+
+
+def tamper_evidence() -> dict:
+    return {
+        "format": "attestos.fedora_sealed_tamper/v1",
+        "mutation": "embedded_cmdline_without_resigning",
+        "original_uki_sha256": UKI,
+        "tampered_uki_sha256": "f" * 64,
+        "firmware_rejected": True,
+        "manufacturer_trusted": False,
+        "policy_trusted": False,
+        "production_trusted": False,
+    }
+
+
 def test_positive_control_requires_every_join():
-    result = validator.evaluate(static_evidence(), guest_evidence(), provenance())
+    result = validator.evaluate(
+        static_evidence(), guest_evidence(), provenance(),
+        compatibility_evidence(), tamper_evidence()
+    )
     assert result["passed"] is True
     assert all(result["gates"].values())
     assert result["authority"] == "harness_positive_control_only"
@@ -93,15 +133,33 @@ def test_positive_control_requires_every_join():
 def test_zero_pcr11_fails_closed():
     guest = guest_evidence()
     guest["pcr_values"]["sha256"]["11"] = "0" * 64
-    result = validator.evaluate(static_evidence(), guest, provenance())
+    result = validator.evaluate(
+        static_evidence(), guest, provenance(),
+        compatibility_evidence(), tamper_evidence()
+    )
     assert result["passed"] is False
     assert result["gates"]["pcr11_nonzero"] is False
+
+
+def test_guest_probe_failure_is_named_in_failed_gates():
+    guest = guest_evidence()
+    guest["success"] = False
+    result = validator.evaluate(
+        static_evidence(), guest, provenance(),
+        compatibility_evidence(), tamper_evidence()
+    )
+    assert result["passed"] is False
+    assert result["gates"]["guest_probe_success"] is False
+    assert "guest_probe_success" in result["failed_gates"]
 
 
 def test_installer_version_cannot_drift_from_provenance():
     evidence = provenance()
     evidence["installer_reference"] = INSTALLER.replace("e" * 64, "f" * 64)
-    result = validator.evaluate(static_evidence(), guest_evidence(), evidence)
+    result = validator.evaluate(
+        static_evidence(), guest_evidence(), evidence,
+        compatibility_evidence(), tamper_evidence()
+    )
     assert result["passed"] is False
     assert result["gates"]["immutable_installer_join"] is False
 
@@ -109,7 +167,10 @@ def test_installer_version_cannot_drift_from_provenance():
 def test_unloaded_decoy_cannot_satisfy_identity_join():
     guest = guest_evidence()
     guest["loaded_uki"]["sha256"] = "c" * 64
-    result = validator.evaluate(static_evidence(), guest, provenance())
+    result = validator.evaluate(
+        static_evidence(), guest, provenance(),
+        compatibility_evidence(), tamper_evidence()
+    )
     assert result["passed"] is False
     assert result["gates"]["loaded_uki_hash_matches_static"] is False
 
@@ -117,7 +178,10 @@ def test_unloaded_decoy_cannot_satisfy_identity_join():
 def test_wrong_loaded_path_fails_even_when_hash_matches():
     guest = guest_evidence()
     guest["stub_image_identifier"] = "\\EFI\\Linux\\decoy.efi"
-    result = validator.evaluate(static_evidence(), guest, provenance())
+    result = validator.evaluate(
+        static_evidence(), guest, provenance(),
+        compatibility_evidence(), tamper_evidence()
+    )
     assert result["passed"] is False
     assert result["gates"]["loaded_uki_path_matches_static"] is False
 
@@ -129,7 +193,47 @@ def test_guest_cannot_promote_a_trust_stage(key):
     guest = guest_evidence()
     guest[key] = True
     with pytest.raises(validator.EvidenceError, match=key):
-        validator.evaluate(static_evidence(), guest, provenance())
+        validator.evaluate(
+            static_evidence(), guest, provenance(),
+            compatibility_evidence(), tamper_evidence()
+        )
+
+
+def test_compatibility_receipt_must_bind_original_and_resigned_hashes():
+    compatibility = compatibility_evidence()
+    compatibility["compatibility_signed_uki_sha256"] = "e" * 64
+    result = validator.evaluate(
+        static_evidence(), guest_evidence(), provenance(),
+        compatibility, tamper_evidence()
+    )
+    assert result["passed"] is False
+    assert result["gates"]["compatibility_receipt_join"] is False
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["embedded_cmdline_sha256", "canary_certificate_sha256"],
+)
+def test_compatibility_receipt_must_bind_signing_inputs(field):
+    compatibility = compatibility_evidence()
+    compatibility[field] = "e" * 64
+    result = validator.evaluate(
+        static_evidence(), guest_evidence(), provenance(),
+        compatibility, tamper_evidence()
+    )
+    assert result["passed"] is False
+    assert result["gates"]["compatibility_receipt_join"] is False
+
+
+def test_tamper_receipt_must_bind_exact_signed_hash_and_firmware_rejection():
+    tamper = tamper_evidence()
+    tamper["firmware_rejected"] = False
+    result = validator.evaluate(
+        static_evidence(), guest_evidence(), provenance(),
+        compatibility_evidence(), tamper
+    )
+    assert result["passed"] is False
+    assert result["gates"]["tampered_cmdline_firmware_rejected"] is False
 
 
 def test_pcr_read_command_selects_only_sha256_pcr11():
@@ -275,6 +379,19 @@ def test_compatibility_resign_preserves_upstream_signature_as_a_separate_gate():
     assert "production_trusted: false" in preparer
 
 
+def test_tamper_negative_changes_exact_signed_uki_in_throwaway_overlay():
+    tamper = (ROOT / "scripts/tamper_fedora_sealed_uki.sh").read_text()
+    workflow = (
+        ROOT / ".github/workflows/fedora-sealed-uki-positive-control.yml"
+    ).read_text()
+    assert '[[ "$original_sha256" == "$expected_sha256" ]]' in tamper
+    assert "attestos_tamper=1" in tamper
+    assert '[[ "$tampered_sha256" != "$original_sha256" ]]' in tamper
+    assert "fedora-output/compat-tamper.qcow2" in workflow
+    assert "[[ $rc -eq 80 ]]" in workflow
+    assert ".uki.tampered_cmdline_firmware_rejected = true" in workflow
+
+
 def test_cli_enforcement_writes_failure_receipt(tmp_path):
     static = static_evidence()
     guest = guest_evidence()
@@ -283,7 +400,9 @@ def test_cli_enforcement_writes_failure_receipt(tmp_path):
         (tmp_path / f"{name}.json").write_text(json.dumps(value))
     output = tmp_path / "result.json"
     assert validator.main is not None
-    result = validator.evaluate(static, guest, provenance())
+    result = validator.evaluate(
+        static, guest, provenance(), compatibility_evidence(), tamper_evidence()
+    )
     output.write_text(json.dumps(result))
     assert result["passed"] is False
     assert "systemd_stub_observed" in result["failed_gates"]

@@ -44,8 +44,14 @@ def enforce_non_authority(*artifacts: dict) -> None:
                 raise EvidenceError(f"{key} must be explicitly false")
 
 
-def evaluate(static: dict, guest: dict, provenance: dict) -> dict:
-    enforce_non_authority(static, guest)
+def evaluate(
+    static: dict,
+    guest: dict,
+    provenance: dict,
+    compatibility: dict,
+    tamper: dict,
+) -> dict:
+    enforce_non_authority(static, guest, compatibility, tamper)
     static_uki = static.get("uki", {})
     guest_uki = guest.get("loaded_uki", {})
     pcr11 = digest(guest.get("pcr_values", {}).get("sha256", {}).get("11"))
@@ -66,10 +72,53 @@ def evaluate(static: dict, guest: dict, provenance: dict) -> dict:
             "@sha256:" in installer_reference
         ),
         "exactly_one_static_uki": static.get("esp", {}).get("uki_count") == 1,
-        "static_uki_signature_verified": static_uki.get("signature_verified") is True,
-        "static_uki_tamper_rejected": (
-            static_uki.get("tampered_cmdline_signature_rejected") is True
+        "compatibility_signature_prepared": (
+            static_uki.get("signature_prepared") is True and
+            static_uki.get("signature_tool") ==
+            "systemd-sbsign_from_immutable_source" and
+            static_uki.get("signature_verification_mode") ==
+            "secure_boot_firmware_admission"
         ),
+        "compatibility_receipt_join": (
+            compatibility.get("format") ==
+            "attestos.fedora_sealed_compat_resign/v1" and
+            compatibility.get("purpose") ==
+            "harness_compatibility_positive_control_only" and
+            compatibility.get("signature_tool") ==
+            "systemd-sbsign_from_immutable_source" and
+            compatibility.get("signature_verification_mode") ==
+            "secure_boot_firmware_admission" and
+            compatibility.get("canary_rsa_bits") == 2048 and
+            compatibility.get("private_key_persisted") is False and
+            digest(compatibility.get("original_uki_sha256")) is not None and
+            compatibility.get("original_uki_sha256") ==
+            static_uki.get("upstream_sha256") and
+            digest(compatibility.get("compatibility_signed_uki_sha256"))
+            is not None and
+            compatibility.get("compatibility_signed_uki_sha256") ==
+            static_uki.get("sha256") and
+            digest(compatibility.get("embedded_cmdline_sha256")) is not None and
+            compatibility.get("embedded_cmdline_sha256") ==
+            static_uki.get("embedded_cmdline_sha256") and
+            digest(compatibility.get("canary_certificate_sha256")) is not None and
+            compatibility.get("canary_certificate_sha256") ==
+            static_uki.get("certificate_sha256") and
+            compatibility.get("original_uki_sha256") !=
+            compatibility.get("compatibility_signed_uki_sha256")
+        ),
+        "tampered_cmdline_firmware_rejected": (
+            tamper.get("format") == "attestos.fedora_sealed_tamper/v1" and
+            tamper.get("mutation") == "embedded_cmdline_without_resigning" and
+            tamper.get("firmware_rejected") is True and
+            digest(tamper.get("original_uki_sha256")) is not None and
+            tamper.get("original_uki_sha256") == static_uki.get("sha256") and
+            tamper.get("original_uki_sha256") ==
+            compatibility.get("compatibility_signed_uki_sha256") and
+            digest(tamper.get("tampered_uki_sha256")) is not None and
+            tamper.get("tampered_uki_sha256") !=
+            tamper.get("original_uki_sha256")
+        ),
+        "guest_probe_success": guest.get("success") is True,
         "secure_boot_enabled": guest.get("secure_boot_enabled") is True,
         "systemd_boot_observed": (
             isinstance(guest.get("loader_info"), str) and
@@ -91,7 +140,7 @@ def evaluate(static: dict, guest: dict, provenance: dict) -> dict:
         ),
         "pcr11_nonzero": pcr11 not in (None, ZERO_SHA256),
     }
-    passed = all(gates.values()) and guest.get("success") is True
+    passed = all(gates.values())
     return {
         "format": FORMAT,
         "passed": passed,
@@ -108,6 +157,7 @@ def evaluate(static: dict, guest: dict, provenance: dict) -> dict:
         "non_authority": [
             "software TPM",
             "upstream development signing key",
+            "run-local compatibility signing key",
             "no attestos agent or policy command line",
             "no manufacturer admission",
             "no production deployment",
@@ -120,11 +170,17 @@ def main() -> int:
     parser.add_argument("--static", type=Path, required=True)
     parser.add_argument("--guest", type=Path, required=True)
     parser.add_argument("--provenance", type=Path, required=True)
+    parser.add_argument("--compatibility", type=Path, required=True)
+    parser.add_argument("--tamper", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--enforce", action="store_true")
     args = parser.parse_args()
     result = evaluate(
-        load_object(args.static), load_object(args.guest), load_object(args.provenance)
+        load_object(args.static),
+        load_object(args.guest),
+        load_object(args.provenance),
+        load_object(args.compatibility),
+        load_object(args.tamper),
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
