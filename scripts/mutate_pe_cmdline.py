@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mutate a PE .cmdline section without rewriting its certificate table."""
+"""Mutate only a PE .cmdline section while preserving every outside byte."""
 
 from __future__ import annotations
 
@@ -63,10 +63,14 @@ def mutate_cmdline(
         "<II", data, certificate_directory
     )
     certificate_end = certificate_offset + certificate_size
-    certificate_table_present = certificate_offset != 0 and certificate_size != 0
-    if require_certificate_table and not certificate_table_present:
+    certificate_table_declared = certificate_offset != 0 or certificate_size != 0
+    certificate_table_complete = certificate_offset != 0 and certificate_size != 0
+    certificate_table_in_bounds = (
+        certificate_table_complete and certificate_end <= len(data)
+    )
+    if require_certificate_table and not certificate_table_complete:
         raise PEError("input does not contain a complete certificate table")
-    if certificate_table_present and certificate_end > len(data):
+    if require_certificate_table and not certificate_table_in_bounds:
         raise PEError("certificate table extends beyond input")
 
     section_table_end = optional_end + section_count * 40
@@ -86,8 +90,15 @@ def mutate_cmdline(
             cmdline_sections.append((raw_offset, raw_size))
     if len(cmdline_sections) != 1:
         raise PEError(f"expected exactly one .cmdline section, found {len(cmdline_sections)}")
-    if certificate_table_present and certificate_offset < max_section_raw_end:
+    certificate_table_overlaps_sections = (
+        certificate_table_in_bounds and certificate_offset < max_section_raw_end
+    )
+    if require_certificate_table and certificate_table_overlaps_sections:
         raise PEError("certificate table overlaps section raw data")
+    certificate_table_valid = (
+        certificate_table_in_bounds and not certificate_table_overlaps_sections
+    )
+    certificate_table_present = certificate_table_valid
 
     raw_offset, raw_size = cmdline_sections[0]
     original_raw = data[raw_offset:raw_offset + raw_size]
@@ -127,6 +138,11 @@ def mutate_cmdline(
         "cmdline_raw_size": raw_size,
         "certificate_table_offset": certificate_offset,
         "certificate_table_size": certificate_size,
+        "certificate_table_declared": certificate_table_declared,
+        "certificate_table_complete": certificate_table_complete,
+        "certificate_table_in_bounds": certificate_table_in_bounds,
+        "certificate_table_overlaps_sections": certificate_table_overlaps_sections,
+        "certificate_table_valid": certificate_table_valid,
         "certificate_table_present": certificate_table_present,
         "certificate_table_sha256_before": (
             sha256(certificate_before) if certificate_before is not None else None
@@ -151,13 +167,20 @@ def main() -> int:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
-    parser.add_argument("--allow-missing-certificate-table", action="store_true")
+    parser.add_argument(
+        "--allow-unusable-certificate-table",
+        action="store_true",
+        help=(
+            "permit missing or non-canonical certificate-directory metadata; "
+            "the mutation remains byte-bounded to .cmdline"
+        ),
+    )
     args = parser.parse_args()
 
     source = args.input.read_bytes()
     mutated, details = mutate_cmdline(
         source,
-        require_certificate_table=not args.allow_missing_certificate_table,
+        require_certificate_table=not args.allow_unusable_certificate_table,
     )
     args.output.write_bytes(mutated)
     receipt = {

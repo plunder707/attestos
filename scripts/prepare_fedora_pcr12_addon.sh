@@ -76,7 +76,7 @@ python3 scripts/mutate_pe_cmdline.py \
     --input "$addon" \
     --output "$work/10-attestos-policy.tampered.addon.efi" \
     --receipt "$work/addon-mutation.json" \
-    --allow-missing-certificate-table >/dev/null
+    --allow-unusable-certificate-table >/dev/null
 if sbverify --cert "$work/addon.pem" "$work/10-attestos-policy.tampered.addon.efi" \
     >/dev/null 2>&1; then
     echo "tampered addon still verifies" >&2

@@ -263,7 +263,7 @@ def test_scripts_preserve_nonpublication_and_private_key_boundary():
     ).read_text()
     assert 'python3 "$ukify" build' in preparer
     assert '--stub="$addon_stub"' in preparer
-    assert "--allow-missing-certificate-table" in preparer
+    assert "--allow-unusable-certificate-table" in preparer
     assert "--add-db" in preparer
     assert "private_key_persisted: false" in preparer
     assert 'rm -f "$work/addon.key"' in preparer
