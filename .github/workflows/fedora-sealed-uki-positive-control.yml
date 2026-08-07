@@ -35,6 +35,8 @@ env:
   ATTESTOS_FEDORA_PK_PEM_SHA256: ebb379ce8b02d49ba1969935793b282e01e0c208b769d06a0674164a972e0bab
   ATTESTOS_FEDORA_KEK_PEM_SHA256: c264c2d7b9de792e778ba4cd8541ffb51d7c664e7b1f785fde9b613ae54f0537
   ATTESTOS_FEDORA_GUID_SHA256: 94d712c748d49cfcd62ed3f8e1eb519fb0c8009340d30a29f26f80e75bc433f9
+  ATTESTOS_FEDORA_EDK2_NVR: edk2-20260213-4.fc44
+  ATTESTOS_FEDORA_EDK2_OVMF_RPM_SHA256: 09aaf8eea949070e864233d09480a7e88cb3b51f58c8adb9bb2e2176bddb0083
 
 jobs:
   positive-control:
@@ -57,6 +59,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             btrfs-progs \
+            cpio \
             cryptsetup-bin \
             curl \
             dosfstools \
@@ -70,6 +73,7 @@ jobs:
             python3-virt-firmware \
             qemu-system-x86 \
             qemu-utils \
+            rpm2cpio \
             sbsigntool \
             skopeo \
             swtpm \
@@ -159,20 +163,23 @@ jobs:
           echo "$ATTESTOS_FEDORA_PK_PEM_SHA256  fedora-output/secureboot-pk.pem" | sha256sum --check --strict
           echo "$ATTESTOS_FEDORA_KEK_PEM_SHA256  fedora-output/secureboot-kek.pem" | sha256sum --check --strict
 
-          code=""
-          template=""
-          for pair in \
-            /usr/share/OVMF/OVMF_CODE_4M.secboot.fd:/usr/share/OVMF/OVMF_VARS_4M.fd \
-            /usr/share/OVMF/OVMF_CODE.secboot.fd:/usr/share/OVMF/OVMF_VARS.fd; do
-            candidate_code=${pair%%:*}
-            candidate_template=${pair#*:}
-            if [[ -f "$candidate_code" && -f "$candidate_template" ]]; then
-              code=$candidate_code
-              template=$candidate_template
-              break
-            fi
-          done
-          [[ -n "$code" && -n "$template" ]]
+          rpm_url="https://kojipkgs.fedoraproject.org/packages/edk2/20260213/4.fc44/noarch/edk2-ovmf-20260213-4.fc44.noarch.rpm"
+          curl --fail --location --silent --show-error "$rpm_url" \
+            --output fedora-output/edk2-ovmf.rpm
+          echo "$ATTESTOS_FEDORA_EDK2_OVMF_RPM_SHA256  fedora-output/edk2-ovmf.rpm" \
+            | sha256sum --check --strict
+          mkdir fedora-output/edk2-root
+          (
+            cd fedora-output/edk2-root
+            rpm2cpio ../edk2-ovmf.rpm | cpio -idm --quiet
+          )
+          code_qcow2="$PWD/fedora-output/edk2-root/usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.qcow2"
+          template_qcow2="$PWD/fedora-output/edk2-root/usr/share/edk2/ovmf/OVMF_VARS_4M.secboot.qcow2"
+          [[ -f "$code_qcow2" && -f "$template_qcow2" ]]
+          code="$PWD/fedora-output/OVMF_CODE_4M.secboot.fd"
+          template="$PWD/fedora-output/OVMF_VARS_4M.secboot.fd"
+          qemu-img convert -f qcow2 -O raw "$code_qcow2" "$code"
+          qemu-img convert -f qcow2 -O raw "$template_qcow2" "$template"
 
           guid=$(tr -d '\r\n' < fedora-output/secureboot-guid)
           virt-fw-vars \
@@ -208,8 +215,12 @@ jobs:
             --arg template_sha256 "$(sha256sum "$template" | cut -d' ' -f1)" \
             --arg vars_sha256 "$(sha256sum fedora-output/OVMF_VARS_CUSTOM.fd | cut -d' ' -f1)" \
             --arg upstream_commit "$ATTESTOS_FEDORA_SOURCE_COMMIT" \
+            --arg edk2_nvr "$ATTESTOS_FEDORA_EDK2_NVR" \
+            --arg edk2_rpm_sha256 "$ATTESTOS_FEDORA_EDK2_OVMF_RPM_SHA256" \
+            --arg edk2_rpm_url "$rpm_url" \
             '{
               format: "attestos.fedora_sealed_firmware/v1",
+              edk2: {nvr: $edk2_nvr, rpm_sha256: $edk2_rpm_sha256, rpm_url: $edk2_rpm_url},
               code: {path: $code_path, sha256: $code_sha256},
               variable_template: {path: $template_path, sha256: $template_sha256},
               enrolled_variables_sha256: $vars_sha256,
@@ -262,6 +273,7 @@ jobs:
             fedora-output/provenance.json
             fedora-output/firmware-vars.json
             fedora-output/firmware-provenance.json
+            fedora-output/probe-installation.json
             fedora-output/static-inspection.json
             fedora-output/guest-evidence.json
             fedora-output/positive-control.json

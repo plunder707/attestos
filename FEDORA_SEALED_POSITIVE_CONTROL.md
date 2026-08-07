@@ -38,6 +38,10 @@ without the loaded-path identity join cannot pass.
   `c264c2d7b9de792e778ba4cd8541ffb51d7c664e7b1f785fde9b613ae54f0537`
 - Upstream key-owner GUID SHA-256:
   `94d712c748d49cfcd62ed3f8e1eb519fb0c8009340d30a29f26f80e75bc433f9`
+- Fedora 44 EDK2 NVR current at the image creation timestamp:
+  `edk2-20260213-4.fc44`
+- Fedora Koji `edk2-ovmf` RPM SHA-256:
+  `09aaf8eea949070e864233d09480a7e88cb3b51f58c8adb9bb2e2176bddb0083`
 - Vendored Cosign public key SHA-256:
   `454e4bc8d59d3c356d193a006d2dbf98a2cbdac6db7e3320da2c57590b6e3ba4`
 - Vendored Secure Boot DB certificate SHA-256:
@@ -50,11 +54,14 @@ key form the frozen provenance packet. The workflow verifies the image manifest
 and signature again before installation.
 
 The upstream variable store was generated against Fedora's EDK2 build and must
-not be mixed with another distribution's OVMF code. The canary instead starts
-from the variable template paired with the GitHub runner's Secure Boot firmware,
-enrolls the frozen upstream PK/KEK/db certificates, and extracts the resulting
-store to verify all three DER fingerprints before boot. The firmware code,
-template, and derived variable-store hashes are preserved in the receipt.
+not be mixed with another distribution's OVMF code. A failed run proved that an
+Ubuntu code/template pair still rejected this unusually large composefs UKI
+despite containing the exact upstream db certificate. The canary therefore
+extracts the exact Fedora 44 `edk2-ovmf` build that was current in Koji when the
+image was created, converts its code/template pair together, enrolls the frozen
+upstream PK/KEK/db certificates, and extracts the resulting store to verify all
+three DER fingerprints before boot. The RPM, firmware code, template, and
+derived variable-store hashes are preserved in the receipt.
 
 This historical candidate replaces the August 3 image after three fail-closed
 runs proved that image internally inconsistent for installation. Its UKI
@@ -88,11 +95,13 @@ evidence and is not used as a bypass.
 - no package, OIDC, signing, or publication authority; and
 - bounded logs and receipts, with the disk and TPM state excluded.
 
-The evidence probe is carried on a second block device and invoked through the
-debug console already enabled by the upstream development image. It reads EFI
+The evidence probe is carried on a second block device. A tracked one-shot unit
+and the probe script are installed in the machine-local mutable `/etc` only
+after static UKI inspection; they never enter the sealed `/usr` tree or alter
+the signed UKI whose identity is measured into PCR 11. The unit reads EFI
 variables, hashes the firmware-identified UKI, reads PCR 11 directly from the
-guest TPM device, writes one receipt back to the probe disk, and powers off. It
-does not install an agent or alter the sealed root.
+guest TPM device, writes one receipt back to the probe disk, and powers off.
+The unit and script hashes are preserved in a separate instrumentation receipt.
 
 ## Non-authority
 

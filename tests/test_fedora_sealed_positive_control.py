@@ -198,13 +198,17 @@ def test_historical_control_binds_source_and_installer_to_one_digest():
     assert "source-inspection.json" in workflow
 
 
-def test_secure_boot_code_and_variable_template_remain_a_matched_pair():
+def test_secure_boot_code_and_variable_template_remain_a_pinned_fedora_pair():
     workflow = (
         ROOT / ".github/workflows/fedora-sealed-uki-positive-control.yml"
     ).read_text()
     runner = (ROOT / "scripts/run_fedora_sealed_positive_control.sh").read_text()
-    assert "candidate_code=${pair%%:*}" in workflow
-    assert "candidate_template=${pair#*:}" in workflow
+    assert "ATTESTOS_FEDORA_EDK2_NVR: edk2-20260213-4.fc44" in workflow
+    assert "ATTESTOS_FEDORA_EDK2_OVMF_RPM_SHA256:" in workflow
+    assert "kojipkgs.fedoraproject.org/packages/edk2/20260213/4.fc44" in workflow
+    assert "rpm2cpio ../edk2-ovmf.rpm" in workflow
+    assert 'qemu-img convert -f qcow2 -O raw "$code_qcow2" "$code"' in workflow
+    assert 'qemu-img convert -f qcow2 -O raw "$template_qcow2" "$template"' in workflow
     assert "--set-pk" in workflow
     assert "--add-kek" in workflow
     assert "--add-db" in workflow
@@ -216,6 +220,24 @@ def test_secure_boot_code_and_variable_template_remain_a_matched_pair():
 
 def test_console_driver_can_type_probe_path_underscore():
     assert console.KEYS["_"] == "shift-minus"
+
+
+def test_probe_unit_is_explicitly_outside_sealed_usr_and_non_authoritative():
+    builder = (ROOT / "scripts/build_fedora_sealed_disk.sh").read_text()
+    unit = (
+        ROOT / "canary/fedora-sealed/fedora-sealed-positive-control.service"
+    ).read_text()
+    assert "scripts/inspect_fedora_sealed_disk.py" in builder
+    assert builder.index("scripts/inspect_fedora_sealed_disk.py") < builder.index(
+        'probe_dir="$mount_root/etc/attestos-positive-control"'
+    )
+    assert "mutable_etc_outside_sealed_usr" in builder
+    assert "affects_static_uki_identity: false" in builder
+    assert "manufacturer_trusted: false" in builder
+    assert "policy_trusted: false" in builder
+    assert "production_trusted: false" in builder
+    assert "ConditionPathExists=/dev/vdb" in unit
+    assert "/etc/attestos-positive-control/fedora_sealed_guest_probe.py" in unit
 
 
 def test_cli_enforcement_writes_failure_receipt(tmp_path):
