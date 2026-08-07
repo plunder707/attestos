@@ -74,6 +74,12 @@ printf 'compat_copy size=%s sha256=%s\n' "$copy_size" "$copy_sha256"
 [[ "$copy_sha256" == "$expected_sha256" ]]
 
 objcopy --dump-section .cmdline="$work/original.cmdline" "$work/original.efi"
+python3 scripts/strip_pe_certificate_table.py \
+    --input "$work/original.efi" \
+    --output "$work/unsigned.efi" \
+    --receipt "$output/certificate-strip.json"
+objcopy --dump-section .cmdline="$work/unsigned.cmdline" "$work/unsigned.efi"
+cmp "$work/original.cmdline" "$work/unsigned.cmdline"
 install -m 0600 "$canary_key" "$work/canary-signing.key"
 install -m 0644 "$canary_cert" "$work/canary-signing.pem"
 sudo podman run \
@@ -91,7 +97,7 @@ sudo podman run \
             --private-key=/work/canary-signing.key \
             --certificate=/work/canary-signing.pem \
             --output=/work/signed.efi \
-            /work/original.efi
+            /work/unsigned.efi
     '
 sudo chown "$(id -u):$(id -g)" "$work/signed.efi"
 rm -f "$work/canary-signing.key"
@@ -127,7 +133,7 @@ jq \
      .uki.certificate_sha256 = $certificate_sha256 |
      .uki.signature_verified = false |
      .uki.signature_prepared = true |
-     .uki.signature_tool = "systemd-sbsign_from_immutable_source" |
+     .uki.signature_tool = "strict_certificate_strip_then_systemd-sbsign" |
      .uki.signature_verification_mode = "secure_boot_firmware_admission" |
      .uki.tampered_cmdline_signature_rejected = false |
      .uki.tampered_cmdline_firmware_rejected = false' \
@@ -135,6 +141,7 @@ jq \
 
 jq -n \
     --arg original_sha256 "$(sha256sum "$work/original.efi" | cut -d' ' -f1)" \
+    --arg unsigned_sha256 "$(sha256sum "$work/unsigned.efi" | cut -d' ' -f1)" \
     --arg resigned_sha256 "$(sha256sum "$work/signed.efi" | cut -d' ' -f1)" \
     --arg cmdline_sha256 "$cmdline_sha256" \
     --arg certificate_sha256 "$canary_cert_sha256" \
@@ -144,11 +151,12 @@ jq -n \
       purpose: "harness_compatibility_positive_control_only",
       upstream_signature_admitted_by_firmware: false,
       original_uki_sha256: $original_sha256,
+      unsigned_uki_sha256: $unsigned_sha256,
       compatibility_signed_uki_sha256: $resigned_sha256,
       embedded_cmdline_sha256: $cmdline_sha256,
       canary_certificate_sha256: $certificate_sha256,
       canary_rsa_bits: ($key_bits | tonumber),
-      signature_tool: "systemd-sbsign_from_immutable_source",
+      signature_tool: "strict_certificate_strip_then_systemd-sbsign",
       signature_verification_mode: "secure_boot_firmware_admission",
       private_key_persisted: false,
       manufacturer_trusted: false,

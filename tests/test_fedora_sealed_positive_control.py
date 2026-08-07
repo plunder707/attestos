@@ -26,6 +26,9 @@ probe = load("fedora_probe", ROOT / "scripts/fedora_sealed_guest_probe.py")
 console = load(
     "fedora_console", ROOT / "scripts/drive_fedora_sealed_console.py"
 )
+stripper = load(
+    "pe_certificate_stripper", ROOT / "scripts/strip_pe_certificate_table.py"
+)
 
 
 IMAGE = (
@@ -54,7 +57,7 @@ def static_evidence() -> dict:
             "certificate_sha256": "d" * 64,
             "signature_verified": False,
             "signature_prepared": True,
-            "signature_tool": "systemd-sbsign_from_immutable_source",
+            "signature_tool": "strict_certificate_strip_then_systemd-sbsign",
             "signature_verification_mode": "secure_boot_firmware_admission",
             "tampered_cmdline_firmware_rejected": True,
         },
@@ -93,11 +96,12 @@ def compatibility_evidence() -> dict:
         "format": "attestos.fedora_sealed_compat_resign/v1",
         "purpose": "harness_compatibility_positive_control_only",
         "original_uki_sha256": "c" * 64,
+        "unsigned_uki_sha256": "1" * 64,
         "compatibility_signed_uki_sha256": UKI,
         "embedded_cmdline_sha256": "b" * 64,
         "canary_certificate_sha256": "d" * 64,
         "canary_rsa_bits": 2048,
-        "signature_tool": "systemd-sbsign_from_immutable_source",
+        "signature_tool": "strict_certificate_strip_then_systemd-sbsign",
         "signature_verification_mode": "secure_boot_firmware_admission",
         "private_key_persisted": False,
         "manufacturer_trusted": False,
@@ -121,10 +125,61 @@ def tamper_evidence() -> dict:
     }
 
 
+def certificate_strip_evidence() -> dict:
+    return {
+        "format": "attestos.pe_certificate_strip/v1",
+        "operation": "remove_terminal_pe_certificate_table",
+        "input_sha256": "c" * 64,
+        "input_size_bytes": 4096,
+        "output_sha256": "1" * 64,
+        "output_size_bytes": 2048,
+        "certificate_count": 1,
+        "manufacturer_trusted": False,
+        "policy_trusted": False,
+        "production_trusted": False,
+    }
+
+
+def synthetic_signed_pe(extra: bytes = b"") -> bytes:
+    pe_offset = 0x80
+    optional_offset = pe_offset + 4 + 20
+    certificate_directory = optional_offset + 112 + 4 * 8
+    certificate_offset = 0x200
+    data = bytearray(certificate_offset)
+    struct.pack_into("<I", data, 0x3C, pe_offset)
+    data[pe_offset:pe_offset + 4] = b"PE\0\0"
+    struct.pack_into("<H", data, pe_offset + 4 + 16, 0xF0)
+    struct.pack_into("<H", data, optional_offset, 0x20B)
+    struct.pack_into("<I", data, optional_offset + 108, 16)
+    struct.pack_into("<II", data, certificate_directory, certificate_offset, 16)
+    data.extend(struct.pack("<IHH8s", 16, 0x0200, 0x0002, b"signature"))
+    data.extend(extra)
+    return bytes(data)
+
+
+def test_strict_certificate_strip_removes_only_terminal_table():
+    source = synthetic_signed_pe()
+    stripped, details = stripper.strip_certificate_table(source)
+    assert stripped == source[:0x200][:0x128] + b"\0" * 8 + source[:0x200][0x130:]
+    assert details["certificate_table_offset"] == 0x200
+    assert details["certificate_table_size"] == 16
+    assert details["certificate_count"] == 1
+    assert details["certificates"][0]["certificate_type"] == 0x0002
+
+
+def test_certificate_strip_rejects_nonterminal_or_malformed_tables():
+    with pytest.raises(stripper.PEError, match="terminal file region"):
+        stripper.strip_certificate_table(synthetic_signed_pe(b"overlay"))
+    malformed = bytearray(synthetic_signed_pe())
+    struct.pack_into("<I", malformed, 0x200, 7)
+    with pytest.raises(stripper.PEError, match="smaller than its header"):
+        stripper.strip_certificate_table(bytes(malformed))
+
+
 def test_positive_control_requires_every_join():
     result = validator.evaluate(
         static_evidence(), guest_evidence(), provenance(),
-        compatibility_evidence(), tamper_evidence()
+        compatibility_evidence(), certificate_strip_evidence(), tamper_evidence()
     )
     assert result["passed"] is True
     assert all(result["gates"].values())
@@ -137,7 +192,7 @@ def test_zero_pcr11_fails_closed():
     guest["pcr_values"]["sha256"]["11"] = "0" * 64
     result = validator.evaluate(
         static_evidence(), guest, provenance(),
-        compatibility_evidence(), tamper_evidence()
+        compatibility_evidence(), certificate_strip_evidence(), tamper_evidence()
     )
     assert result["passed"] is False
     assert result["gates"]["pcr11_nonzero"] is False
@@ -148,7 +203,7 @@ def test_guest_probe_failure_is_named_in_failed_gates():
     guest["success"] = False
     result = validator.evaluate(
         static_evidence(), guest, provenance(),
-        compatibility_evidence(), tamper_evidence()
+        compatibility_evidence(), certificate_strip_evidence(), tamper_evidence()
     )
     assert result["passed"] is False
     assert result["gates"]["guest_probe_success"] is False
@@ -160,7 +215,7 @@ def test_installer_version_cannot_drift_from_provenance():
     evidence["installer_reference"] = INSTALLER.replace("e" * 64, "f" * 64)
     result = validator.evaluate(
         static_evidence(), guest_evidence(), evidence,
-        compatibility_evidence(), tamper_evidence()
+        compatibility_evidence(), certificate_strip_evidence(), tamper_evidence()
     )
     assert result["passed"] is False
     assert result["gates"]["immutable_installer_join"] is False
@@ -171,7 +226,7 @@ def test_unloaded_decoy_cannot_satisfy_identity_join():
     guest["loaded_uki"]["sha256"] = "c" * 64
     result = validator.evaluate(
         static_evidence(), guest, provenance(),
-        compatibility_evidence(), tamper_evidence()
+        compatibility_evidence(), certificate_strip_evidence(), tamper_evidence()
     )
     assert result["passed"] is False
     assert result["gates"]["loaded_uki_hash_matches_static"] is False
@@ -182,7 +237,7 @@ def test_wrong_loaded_path_fails_even_when_hash_matches():
     guest["stub_image_identifier"] = "\\EFI\\Linux\\decoy.efi"
     result = validator.evaluate(
         static_evidence(), guest, provenance(),
-        compatibility_evidence(), tamper_evidence()
+        compatibility_evidence(), certificate_strip_evidence(), tamper_evidence()
     )
     assert result["passed"] is False
     assert result["gates"]["loaded_uki_path_matches_static"] is False
@@ -197,7 +252,7 @@ def test_guest_cannot_promote_a_trust_stage(key):
     with pytest.raises(validator.EvidenceError, match=key):
         validator.evaluate(
             static_evidence(), guest, provenance(),
-            compatibility_evidence(), tamper_evidence()
+            compatibility_evidence(), certificate_strip_evidence(), tamper_evidence()
         )
 
 
@@ -206,7 +261,7 @@ def test_compatibility_receipt_must_bind_original_and_resigned_hashes():
     compatibility["compatibility_signed_uki_sha256"] = "e" * 64
     result = validator.evaluate(
         static_evidence(), guest_evidence(), provenance(),
-        compatibility, tamper_evidence()
+        compatibility, certificate_strip_evidence(), tamper_evidence()
     )
     assert result["passed"] is False
     assert result["gates"]["compatibility_receipt_join"] is False
@@ -221,10 +276,21 @@ def test_compatibility_receipt_must_bind_signing_inputs(field):
     compatibility[field] = "e" * 64
     result = validator.evaluate(
         static_evidence(), guest_evidence(), provenance(),
-        compatibility, tamper_evidence()
+        compatibility, certificate_strip_evidence(), tamper_evidence()
     )
     assert result["passed"] is False
     assert result["gates"]["compatibility_receipt_join"] is False
+
+
+def test_certificate_strip_receipt_must_join_original_and_unsigned_hashes():
+    certificate_strip = certificate_strip_evidence()
+    certificate_strip["output_sha256"] = "2" * 64
+    result = validator.evaluate(
+        static_evidence(), guest_evidence(), provenance(),
+        compatibility_evidence(), certificate_strip, tamper_evidence()
+    )
+    assert result["passed"] is False
+    assert result["gates"]["certificate_strip_receipt_join"] is False
 
 
 def test_tamper_receipt_must_bind_exact_signed_hash_and_firmware_rejection():
@@ -232,7 +298,7 @@ def test_tamper_receipt_must_bind_exact_signed_hash_and_firmware_rejection():
     tamper["firmware_rejected"] = False
     result = validator.evaluate(
         static_evidence(), guest_evidence(), provenance(),
-        compatibility_evidence(), tamper
+        compatibility_evidence(), certificate_strip_evidence(), tamper
     )
     assert result["passed"] is False
     assert result["gates"]["tampered_cmdline_firmware_rejected"] is False
@@ -243,7 +309,7 @@ def test_tamper_receipt_must_bind_the_normalized_embedded_cmdline():
     tamper["original_cmdline_sha256"] = "a" * 64
     result = validator.evaluate(
         static_evidence(), guest_evidence(), provenance(),
-        compatibility_evidence(), tamper
+        compatibility_evidence(), certificate_strip_evidence(), tamper
     )
     assert result["passed"] is False
     assert result["gates"]["tampered_cmdline_firmware_rejected"] is False
@@ -372,7 +438,7 @@ def test_firmware_rejection_stops_without_waiting_for_global_timeout():
     assert "exit 80" in runner
 
 
-def test_compatibility_resign_preserves_upstream_signature_as_a_separate_gate():
+def test_compatibility_resign_preserves_original_as_a_separate_negative_gate():
     preparer = (
         ROOT / "scripts/prepare_fedora_sealed_compat_control.sh"
     ).read_text()
@@ -381,8 +447,11 @@ def test_compatibility_resign_preserves_upstream_signature_as_a_separate_gate():
     assert '[[ "$upstream_cert_sha256" == "$expected_cert_sha256" ]]' in preparer
     assert '[[ "$copy_sha256" == "$expected_sha256" ]]' in preparer
     assert "--network=none" in preparer
+    assert "scripts/strip_pe_certificate_table.py" in preparer
+    assert '--receipt "$output/certificate-strip.json"' in preparer
     assert "systemd-sbsign" in preparer
     assert "--private-key=/work/canary-signing.key" in preparer
+    assert "/work/unsigned.efi" in preparer
     assert 'rm -f "$work/canary-signing.key"' in preparer
     assert 'cmp "$work/original.cmdline" "$work/signed.cmdline"' in preparer
     assert 'purpose: "harness_compatibility_positive_control_only"' in preparer
@@ -432,7 +501,8 @@ def test_cli_enforcement_writes_failure_receipt(tmp_path):
     output = tmp_path / "result.json"
     assert validator.main is not None
     result = validator.evaluate(
-        static, guest, provenance(), compatibility_evidence(), tamper_evidence()
+        static, guest, provenance(), compatibility_evidence(),
+        certificate_strip_evidence(), tamper_evidence()
     )
     output.write_text(json.dumps(result))
     assert result["passed"] is False

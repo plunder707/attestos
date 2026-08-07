@@ -14,6 +14,7 @@ on:
       - 'scripts/fedora_sealed_guest_probe.py'
       - 'scripts/inspect_fedora_sealed_disk.py'
       - 'scripts/run_fedora_sealed_positive_control.sh'
+      - 'scripts/strip_pe_certificate_table.py'
       - 'scripts/tamper_fedora_sealed_uki.sh'
       - 'scripts/validate_fedora_sealed_positive_control.py'
       - 'tests/test_fedora_sealed_positive_control.py'
@@ -364,6 +365,7 @@ jobs:
             --guest fedora-output/compat-boot/guest-evidence.json \
             --provenance fedora-output/provenance.json \
             --compatibility fedora-output/compat-resign.json \
+            --certificate-strip fedora-output/certificate-strip.json \
             --tamper fedora-output/compat-tamper/tamper-admission.json \
             --output fedora-output/positive-control.json
 
@@ -388,6 +390,7 @@ jobs:
             fedora-output/upstream-admission.json
             fedora-output/upstream-admission/serial.log
             fedora-output/compat-resign.json
+            fedora-output/certificate-strip.json
             fedora-output/compat-firmware-vars.json
             fedora-output/compat-tamper/tamper-preboot.json
             fedora-output/compat-tamper/tamper-admission.json
@@ -413,6 +416,7 @@ jobs:
             --guest fedora-output/compat-boot/guest-evidence.json \
             --provenance fedora-output/provenance.json \
             --compatibility fedora-output/compat-resign.json \
+            --certificate-strip fedora-output/certificate-strip.json \
             --tamper fedora-output/compat-tamper/tamper-admission.json \
             --output fedora-output/positive-control.json \
             --enforce

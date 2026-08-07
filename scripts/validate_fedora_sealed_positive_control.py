@@ -49,9 +49,10 @@ def evaluate(
     guest: dict,
     provenance: dict,
     compatibility: dict,
+    certificate_strip: dict,
     tamper: dict,
 ) -> dict:
-    enforce_non_authority(static, guest, compatibility, tamper)
+    enforce_non_authority(static, guest, compatibility, certificate_strip, tamper)
     static_uki = static.get("uki", {})
     guest_uki = guest.get("loaded_uki", {})
     pcr11 = digest(guest.get("pcr_values", {}).get("sha256", {}).get("11"))
@@ -75,7 +76,7 @@ def evaluate(
         "compatibility_signature_prepared": (
             static_uki.get("signature_prepared") is True and
             static_uki.get("signature_tool") ==
-            "systemd-sbsign_from_immutable_source" and
+            "strict_certificate_strip_then_systemd-sbsign" and
             static_uki.get("signature_verification_mode") ==
             "secure_boot_firmware_admission"
         ),
@@ -85,7 +86,7 @@ def evaluate(
             compatibility.get("purpose") ==
             "harness_compatibility_positive_control_only" and
             compatibility.get("signature_tool") ==
-            "systemd-sbsign_from_immutable_source" and
+            "strict_certificate_strip_then_systemd-sbsign" and
             compatibility.get("signature_verification_mode") ==
             "secure_boot_firmware_admission" and
             compatibility.get("canary_rsa_bits") == 2048 and
@@ -93,6 +94,11 @@ def evaluate(
             digest(compatibility.get("original_uki_sha256")) is not None and
             compatibility.get("original_uki_sha256") ==
             static_uki.get("upstream_sha256") and
+            digest(compatibility.get("unsigned_uki_sha256")) is not None and
+            compatibility.get("unsigned_uki_sha256") not in (
+                compatibility.get("original_uki_sha256"),
+                compatibility.get("compatibility_signed_uki_sha256"),
+            ) and
             digest(compatibility.get("compatibility_signed_uki_sha256"))
             is not None and
             compatibility.get("compatibility_signed_uki_sha256") ==
@@ -105,6 +111,22 @@ def evaluate(
             static_uki.get("certificate_sha256") and
             compatibility.get("original_uki_sha256") !=
             compatibility.get("compatibility_signed_uki_sha256")
+        ),
+        "certificate_strip_receipt_join": (
+            certificate_strip.get("format") ==
+            "attestos.pe_certificate_strip/v1" and
+            certificate_strip.get("operation") ==
+            "remove_terminal_pe_certificate_table" and
+            certificate_strip.get("input_sha256") ==
+            compatibility.get("original_uki_sha256") and
+            certificate_strip.get("output_sha256") ==
+            compatibility.get("unsigned_uki_sha256") and
+            isinstance(certificate_strip.get("input_size_bytes"), int) and
+            isinstance(certificate_strip.get("output_size_bytes"), int) and
+            certificate_strip.get("input_size_bytes", 0) >
+            certificate_strip.get("output_size_bytes", 0) > 0 and
+            isinstance(certificate_strip.get("certificate_count"), int) and
+            certificate_strip.get("certificate_count", 0) >= 1
         ),
         "tampered_cmdline_firmware_rejected": (
             tamper.get("format") == "attestos.fedora_sealed_tamper/v1" and
@@ -177,6 +199,7 @@ def main() -> int:
     parser.add_argument("--guest", type=Path, required=True)
     parser.add_argument("--provenance", type=Path, required=True)
     parser.add_argument("--compatibility", type=Path, required=True)
+    parser.add_argument("--certificate-strip", type=Path, required=True)
     parser.add_argument("--tamper", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--enforce", action="store_true")
@@ -186,6 +209,7 @@ def main() -> int:
         load_object(args.guest),
         load_object(args.provenance),
         load_object(args.compatibility),
+        load_object(args.certificate_strip),
         load_object(args.tamper),
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)

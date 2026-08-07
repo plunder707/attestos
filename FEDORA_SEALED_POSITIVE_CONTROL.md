@@ -79,12 +79,15 @@ The matched upstream pair still rejects the original UKI with
 exact upstream db certificate is enrolled. The certificate uses RSA-4096. This
 is retained as a bounded negative admission receipt, not tuned away. A second
 arm adds a fresh RSA-2048 test certificate to a copy of the same variable
-store, adds a compatibility Authenticode signature with the pinned Fedora
-image's own `systemd-sbsign`, and proves that the embedded command line is
-byte-identical before boot. Ubuntu's older `sbverify` cannot parse this large
-UKI reliably, so the compatibility signature is not labeled statically
-verified: the canary requires firmware to reject a tampered overlay and admit
-the exact untampered hash instead. Its private key is deleted
+store, strictly removes the original terminal PE certificate table, adds one
+compatibility Authenticode signature with the pinned Fedora image's own
+`systemd-sbsign`, and proves that the embedded command line is byte-identical
+across stripping and signing. This is necessary because `systemd-sbsign`
+appends signatures by design, while the matched firmware rejects the original
+signature. Ubuntu's older `sbverify` cannot parse this large UKI reliably, so
+the compatibility signature is not labeled statically verified: the canary
+requires firmware to reject a tampered overlay and admit the exact untampered
+hash instead. Its private key is deleted
 before artifacts are collected. That arm is a harness compatibility control;
 it cannot establish that the original upstream signature is firmware-admissible.
 
