@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -59,6 +60,13 @@ def pcr(guest: dict, index: str) -> str | None:
 def policy_tokens(guest: dict) -> list[str]:
     tokens = guest.get("cmdline_tokens")
     return tokens if isinstance(tokens, list) and all(isinstance(x, str) for x in tokens) else []
+
+
+def replay_load_options_pcr12(tokens: tuple[str, ...] = POLICY_TOKENS) -> str:
+    """Replay systemd-stub's single EFI load-options extend into SHA-256 PCR 12."""
+    load_options = " ".join(tokens).encode("utf-16-le") + b"\0\0"
+    event_digest = hashlib.sha256(load_options).digest()
+    return hashlib.sha256(bytes(32) + event_digest).hexdigest()
 
 
 def observed_addons(guest: dict) -> list[dict]:
@@ -168,6 +176,7 @@ def evaluate(
     guests = (baseline, signed_one, signed_two, tampered)
     pcr11_values = [pcr(guest, "11") for guest in guests]
     signed_pcr12 = (pcr(signed_one, "12"), pcr(signed_two, "12"))
+    expected_signed_pcr12 = replay_load_options_pcr12()
 
     gates = {
         "frozen_upstream_uki": (
@@ -265,10 +274,12 @@ def evaluate(
             and guest_addon_join(signed_two, signed_addon_sha256)
         ),
         "signed_addon_policy_applied": (
-            signed_one.get("stub_pcr_kernel_parameters") == "12"
-            and signed_two.get("stub_pcr_kernel_parameters") == "12"
-            and all(policy_tokens(signed_one).count(token) == 1 for token in POLICY_TOKENS)
+            all(policy_tokens(signed_one).count(token) == 1 for token in POLICY_TOKENS)
             and all(policy_tokens(signed_two).count(token) == 1 for token in POLICY_TOKENS)
+        ),
+        "signed_addon_pcr12_exact_replay": (
+            signed_pcr12[0] == expected_signed_pcr12
+            and signed_pcr12[1] == expected_signed_pcr12
         ),
         "signed_addon_pcr12_nonzero_reproducible": (
             signed_pcr12[0] not in (None, ZERO_SHA256)
@@ -294,6 +305,13 @@ def evaluate(
         "pcr11_sha256": pcr11_values[0] if pcr11_values else None,
         "baseline_pcr12_sha256": pcr(baseline, "12"),
         "signed_pcr12_sha256": signed_pcr12[0],
+        "expected_signed_pcr12_sha256": expected_signed_pcr12,
+        "stub_pcr_kernel_parameters": {
+            "baseline": baseline.get("stub_pcr_kernel_parameters"),
+            "signed_one": signed_one.get("stub_pcr_kernel_parameters"),
+            "signed_two": signed_two.get("stub_pcr_kernel_parameters"),
+            "tampered": tampered.get("stub_pcr_kernel_parameters"),
+        },
         "tampered_pcr12_sha256": pcr(tampered, "12"),
         "manufacturer_trusted": False,
         "policy_trusted": False,

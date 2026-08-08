@@ -12,8 +12,9 @@ measure it into SHA-256 PCR 12 without changing the UKI or PCR 11?
 systemd v259 documents `/loader/addons/*.addon.efi` as signed PE companion
 files. `systemd-stub` verifies accepted add-ons against UEFI DB, Shim DB, or
 MOK, appends their `.cmdline` sections after the UKI command line, and measures
-the add-on parameters into PCR 12. `StubPcrKernelParameters` is set to `12`
-only when that measurement completes.
+the add-on parameters into PCR 12. The v259.5 source sets
+`StubPcrKernelParameters` only when its aggregate parameter-measurement state
+is positive; the variable is not a unique receipt for one add-on measurement.
 
 The add-on is assembled with the digest-pinned Fedora v259.5 `ukify` and stub,
 then signed by a SHA-pinned Fedora v259.5 `systemd-sbsign` inside a disposable
@@ -77,7 +78,8 @@ All gates must pass:
    zero PCR 12;
 5. both signed arms contain the exact statically inspected add-on;
 6. both signed arms report each policy token exactly once;
-7. both signed arms report `StubPcrKernelParameters=12`;
+7. both signed-arm PCR 12 values exactly equal the TPM replay of systemd-stub's
+   UTF-16LE/NUL-terminated load-options measurement;
 8. signed-arm PCR 12 is nonzero and byte-identical across two fresh TPM boots;
 9. the tampered file is the exact statically rejected mutation;
 10. the tampered guest still boots the unchanged UKI but does not apply or
@@ -96,6 +98,24 @@ target. Requiring the whole boot to fail would test the wrong component.
 - If the signed arms disagree on PCR 12, stop: the measurement is not stable
   enough for an exact policy.
 - Missing or conflicting evidence is a failed gate, never a semantic pass.
+
+Run `31230053715` reached every arm but failed the original
+`StubPcrKernelParameters=12` gate. Its receipts showed both policy tokens
+exactly once and the same nonzero PCR 12 in both signed boots, while the
+tampered arm was rejected and returned to the baseline. Source inspection then
+showed that the EFI variable reports aggregate parameter-measurement state,
+not the individual add-on event. The replacement gate is stricter and directly
+replays the measured bytes:
+
+```text
+SHA256(32 zero bytes ||
+       SHA256(UTF-16LE("lockdown=confidentiality module.sig_enforce=1" + NUL)))
+= ca62dd5f79fa336fadc40c4b2f6ef3b1870d58d271fd01b6f96a758f25cda8f5
+```
+
+The EFI variable remains in every guest receipt as a diagnostic. This checker
+correction does not retroactively turn run `31230053715` green; a fresh run and
+same-head replication are required.
 
 ## Boundary
 

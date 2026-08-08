@@ -25,7 +25,7 @@ probe = load("fedora_probe_pcr12", ROOT / "scripts/fedora_sealed_guest_probe.py"
 
 UKI = "a" * 64
 PCR11 = "b" * 64
-PCR12 = "c" * 64
+PCR12 = validator.replay_load_options_pcr12()
 ADDON = "d" * 64
 TAMPERED = "e" * 64
 ZERO = "0" * 64
@@ -153,7 +153,7 @@ def guest(kind: str) -> dict:
     if kind == "baseline":
         pcr12, stub_parameters, tokens, addons = ZERO, None, ["rw"], []
     elif kind == "signed":
-        pcr12, stub_parameters, tokens = PCR12, "12", ["rw", *POLICY]
+        pcr12, stub_parameters, tokens = PCR12, None, ["rw", *POLICY]
         addons = [{"name": "10-attestos-policy.addon.efi", "sha256": ADDON, "size_bytes": 4096}]
     elif kind == "tampered":
         pcr12, stub_parameters, tokens = ZERO, None, ["rw"]
@@ -221,6 +221,23 @@ def test_addon_pcr12_must_reproduce():
     second["pcr_values"]["sha256"]["12"] = "8" * 64
     result = evaluate_with(signed_guest_two=second)
     assert result["gates"]["signed_addon_pcr12_nonzero_reproducible"] is False
+    assert result["gates"]["signed_addon_pcr12_exact_replay"] is False
+
+
+def test_exact_pcr12_replay_is_bound_to_policy_bytes():
+    assert PCR12 == "ca62dd5f79fa336fadc40c4b2f6ef3b1870d58d271fd01b6f96a758f25cda8f5"
+    signed = guest("signed")
+    signed["pcr_values"]["sha256"]["12"] = "8" * 64
+    result = evaluate_with(signed_guest_one=signed)
+    assert result["gates"]["signed_addon_policy_applied"] is True
+    assert result["gates"]["signed_addon_pcr12_exact_replay"] is False
+
+
+def test_parameter_efi_variable_is_diagnostic_not_addon_receipt():
+    result = evaluate_with()
+    assert result["passed"] is True
+    assert result["stub_pcr_kernel_parameters"]["signed_one"] is None
+    assert result["stub_pcr_kernel_parameters"]["signed_two"] is None
 
 
 def test_tampered_addon_must_be_present_but_not_applied():
