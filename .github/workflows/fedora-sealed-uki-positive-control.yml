@@ -177,14 +177,14 @@ jobs:
           smoke="$root/signer-smoke"
           mkdir "$smoke"
           openssl req -new -newkey rsa:2048 -nodes -x509 -sha256 -days 1 \
-            -subj '/CN=attestos signer preflight/' \
+            -subj '/CN=attestos PCR12 disposable canary/' \
             -keyout "$smoke/addon.key" \
             -out "$smoke/addon.pem" >/dev/null 2>&1
           python3 "$ukify" build \
             --stub="$stub" \
             --cmdline='lockdown=confidentiality module.sig_enforce=1' \
             --sbat="sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md
-          attestos-addon,1,attestos signer preflight,attestos-addon,1,https://github.com/plunder707/attestos" \
+          attestos-addon,1,attestos PCR12 canary,attestos-addon,1,https://github.com/plunder707/attestos" \
             --output="$smoke/unsigned.addon.efi"
           sudo podman run --rm --network=none \
             -v "$smoke:/work:rw,Z" \
@@ -204,10 +204,12 @@ jobs:
             echo 'tampered signer preflight add-on still verifies' >&2
             exit 1
           fi
-          rm -rf "$smoke"
+          rm -f "$smoke/addon.key"
+          test ! -e "$smoke/addon.key"
           echo "ATTESTOS_FEDORA_UKIFY=$ukify" >> "$GITHUB_ENV"
           echo "ATTESTOS_FEDORA_ADDON_STUB=$stub" >> "$GITHUB_ENV"
           echo "ATTESTOS_FEDORA_SIGNER_IMAGE=$signer_image" >> "$GITHUB_ENV"
+          echo "ATTESTOS_FEDORA_SIGNER_PREFLIGHT=$smoke" >> "$GITHUB_ENV"
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2

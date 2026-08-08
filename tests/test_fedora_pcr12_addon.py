@@ -287,10 +287,12 @@ def test_scripts_preserve_nonpublication_and_private_key_boundary():
     signer_containerfile = (
         ROOT / "canary/fedora-sealed/Containerfile.addon-signer"
     ).read_text()
-    assert 'python3 "$ukify" build' in preparer
-    assert '--stub="$addon_stub"' in preparer
+    assert 'python3 "$ukify" build' in workflow
+    assert '--stub="$stub"' in workflow
     assert "systemd-sbsign" in preparer
+    assert "--private-key" not in preparer
     assert "ATTESTOS_FEDORA_SIGNER_IMAGE" in preparer
+    assert "ATTESTOS_FEDORA_SIGNER_PREFLIGHT" in preparer
     assert "ATTESTOS_SYSTEMD_SBSIGN_SHA256" in preparer
     assert "ATTESTOS_SYSTEMD_SHARED_OBJECT_SHA256" in preparer
     assert 'mktemp -d -p "$(dirname "$output")"' in preparer
@@ -299,7 +301,7 @@ def test_scripts_preserve_nonpublication_and_private_key_boundary():
     assert "10-attestos-policy.unsigned.addon.efi" in preparer
     assert "--add-db" in preparer
     assert "private_key_persisted: false" in preparer
-    assert 'rm -f "$work/addon.key"' in preparer
+    assert 'test ! -e "$preflight/addon.key"' in preparer
     assert "packages: write" not in preparer
     assert "expected exactly one installed UKI" in installer
     assert '[[ "$uki_sha256" == "$expected_uki_sha256" ]]' in installer
@@ -308,8 +310,11 @@ def test_scripts_preserve_nonpublication_and_private_key_boundary():
     assert "disk_sha256: $disk_sha256" in runner
     assert "permissions:\n  contents: read" in workflow
     assert "packages: write" not in workflow
-    assert "attestos signer preflight" in workflow
+    assert "attestos PCR12 disposable canary" in workflow
     assert "tampered signer preflight add-on still verifies" in workflow
+    assert 'rm -f "$smoke/addon.key"' in workflow
+    assert "/usr/lib/systemd/systemd-sbsign sign" in workflow
+    assert "ATTESTOS_FEDORA_SIGNER_PREFLIGHT" in workflow
     assert "RUN " not in signer_containerfile
     assert "fedora@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898" in signer_containerfile
     assert "COPY usr/lib/systemd/systemd-sbsign" in signer_containerfile

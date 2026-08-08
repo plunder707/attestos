@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build one run-local signed cmdline addon and enroll only its public test key.
+# Admit one preflight-validated cmdline add-on and enroll only its public test key.
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
@@ -13,6 +13,7 @@ output=$(realpath -m "$3")
 source_reference=${ATTESTOS_FEDORA_IMAGE_REFERENCE:?missing immutable image reference}
 signer_base_reference=${ATTESTOS_FEDORA_SIGNER_BASE_REFERENCE:?missing immutable signer base}
 signer_image=${ATTESTOS_FEDORA_SIGNER_IMAGE:?missing local signer image}
+preflight=$(realpath "${ATTESTOS_FEDORA_SIGNER_PREFLIGHT:?missing validated signer preflight}")
 systemd_nvr=${ATTESTOS_SYSTEMD_NVR:?missing pinned systemd NVR}
 ukify_rpm_sha256=${ATTESTOS_SYSTEMD_UKIFY_RPM_SHA256:?missing ukify RPM digest}
 boot_rpm_sha256=${ATTESTOS_SYSTEMD_BOOT_UNSIGNED_RPM_SHA256:?missing boot RPM digest}
@@ -43,18 +44,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
-openssl req -new -newkey rsa:2048 -nodes -x509 -sha256 -days 1 \
-    -subj '/CN=attestos PCR12 disposable canary/' \
-    -keyout "$work/addon.key" \
-    -out "$work/addon.pem" >/dev/null 2>&1
-
 unsigned="$work/10-attestos-policy.unsigned.addon.efi"
-python3 "$ukify" build \
-    --stub="$addon_stub" \
-    --cmdline="$policy" \
-    --sbat="sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md
-attestos-addon,1,attestos PCR12 canary,attestos-addon,1,https://github.com/plunder707/attestos" \
-    --output="$unsigned"
+addon="$work/10-attestos-policy.addon.efi"
+tampered="$work/10-attestos-policy.tampered.addon.efi"
+mutation="$work/addon-mutation.json"
+for file in unsigned.addon.efi signed.addon.efi tampered.addon.efi addon.pem mutation.json; do
+    test -s "$preflight/$file"
+done
+test ! -e "$preflight/addon.key"
+install -m 0644 "$preflight/unsigned.addon.efi" "$unsigned"
+install -m 0644 "$preflight/signed.addon.efi" "$addon"
+install -m 0644 "$preflight/tampered.addon.efi" "$tampered"
+install -m 0644 "$preflight/addon.pem" "$work/addon.pem"
+install -m 0644 "$preflight/mutation.json" "$mutation"
 
 actual_sbsign_sha256=$(sudo podman run --rm --network=none "$signer_image" \
     sha256sum /usr/lib/systemd/systemd-sbsign | cut -d' ' -f1)
@@ -63,26 +65,6 @@ actual_shared_object_sha256=$(sudo podman run --rm --network=none "$signer_image
     sha256sum /usr/lib64/systemd/libsystemd-shared-259.5-1.fc44.so | cut -d' ' -f1)
 [[ "$actual_shared_object_sha256" == "$expected_shared_object_sha256" ]]
 
-sudo podman run \
-    --rm \
-    --network=none \
-    -v "$work:/work:rw,Z" \
-    "$signer_image" \
-    sh -eu -c '
-        signer=$(command -v systemd-sbsign || true)
-        if test -z "$signer"; then
-            signer=/usr/lib/systemd/systemd-sbsign
-        fi
-        test -x "$signer"
-        exec "$signer" sign \
-            --private-key=/work/addon.key \
-            --certificate=/work/addon.pem \
-            --output=/work/10-attestos-policy.addon.efi \
-            /work/10-attestos-policy.unsigned.addon.efi
-    '
-
-addon="$work/10-attestos-policy.addon.efi"
-sudo chown "$(id -u):$(id -g)" "$addon"
 test -s "$addon"
 unsigned_size=$(stat -c %s "$unsigned")
 signed_size=$(stat -c %s "$addon")
@@ -113,9 +95,11 @@ PY
 
 python3 scripts/mutate_pe_cmdline.py \
     --input "$addon" \
-    --output "$work/10-attestos-policy.tampered.addon.efi" \
-    --receipt "$work/addon-mutation.json" >/dev/null
-if sbverify --cert "$work/addon.pem" "$work/10-attestos-policy.tampered.addon.efi" \
+    --output "$work/recomputed-tampered.addon.efi" \
+    --receipt "$work/recomputed-mutation.json" >/dev/null
+cmp "$tampered" "$work/recomputed-tampered.addon.efi"
+cmp "$mutation" "$work/recomputed-mutation.json"
+if sbverify --cert "$work/addon.pem" "$tampered" \
     >/dev/null 2>&1; then
     echo "tampered addon still verifies" >&2
     exit 1
@@ -161,11 +145,10 @@ cert_occurrences=$(grep -Fxc "$cert_sha256" "$work/extended-cert-hashes" || true
 
 install -m 0644 "$addon" "$output/10-attestos-policy.addon.efi"
 install -m 0644 \
-    "$work/10-attestos-policy.tampered.addon.efi" \
+    "$tampered" \
     "$output/10-attestos-policy.tampered.addon.efi"
 install -m 0644 "$work/addon.pem" "$output/addon-public.pem"
-install -m 0644 "$work/addon-mutation.json" "$output/addon-mutation.json"
-rm -f "$work/addon.key"
+install -m 0644 "$mutation" "$output/addon-mutation.json"
 
 jq -n \
     --arg source_reference "$source_reference" \
@@ -184,13 +167,13 @@ jq -n \
     --arg owner_guid "$owner_guid" \
     --arg addon_sha256 "$(sha256sum "$addon" | cut -d' ' -f1)" \
     --argjson addon_size "$(stat -c %s "$addon")" \
-    --arg tampered_sha256 "$(sha256sum "$work/10-attestos-policy.tampered.addon.efi" | cut -d' ' -f1)" \
+    --arg tampered_sha256 "$(sha256sum "$tampered" | cut -d' ' -f1)" \
     --arg certificate_sha256 "$cert_sha256" \
     --arg source_vars_sha256 "$(sha256sum "$source_vars" | cut -d' ' -f1)" \
     --arg extended_vars_sha256 "$(sha256sum "$output_vars" | cut -d' ' -f1)" \
     --argjson original_certificate_count "$(wc -l < "$work/original-cert-hashes")" \
     --argjson extended_certificate_count "$(wc -l < "$work/extended-cert-hashes")" \
-    --slurpfile mutation "$work/addon-mutation.json" \
+    --slurpfile mutation "$mutation" \
     '{
       format: "attestos.fedora_pcr12_addon_static/v1",
       purpose: "disposable_pcr12_addon_harness_only",
@@ -241,4 +224,5 @@ jq -n \
       production_trusted: false
     }' > "$output/addon-static.json"
 
+test ! -e "$preflight/addon.key"
 test ! -e "$output/addon.key"

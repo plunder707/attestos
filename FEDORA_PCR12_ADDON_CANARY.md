@@ -18,9 +18,11 @@ only when that measurement completes.
 The add-on is assembled with the digest-pinned Fedora v259.5 `ukify` and stub,
 then signed by a SHA-pinned Fedora v259.5 `systemd-sbsign` inside a disposable
 signer image built from a digest-pinned Fedora base. The signer runs without
-network access while the private key is mounted. A complete, in-bounds PE
-certificate table is required before the signed artifact or its byte-bounded
-tamper negative can enter any boot arm.
+network access while the private key is mounted. Signing happens exactly once
+in the early preflight; the private key is deleted before image construction,
+and the exact validated public artifacts are carried into all later gates. A
+complete, in-bounds PE certificate table is required before the signed artifact
+or its byte-bounded tamper negative can enter any boot arm.
 
 ## Frozen Arms
 
@@ -54,8 +56,10 @@ signature verification, firmware admission, and a post-signature tamper
 negative; signer exit status alone is never evidence of a valid artifact.
 The bind-mounted signing workspace is created beside the eventual evidence
 output so the signer and host parser observe the same filesystem; a runner
-`/tmp` handoff that truncated a small signed PE during development is excluded
-from the frozen path.
+`/tmp` handoff that produced an inconsistent small signed PE during development
+is excluded from the frozen path. A second signer invocation is also excluded:
+the artifact that passes preflight is the artifact installed in both signed
+arms.
 
 ## Admission Gates
 

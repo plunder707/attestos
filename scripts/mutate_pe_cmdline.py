@@ -69,7 +69,11 @@ def mutate_cmdline(
     if not certificate_table_complete:
         raise PEError("input does not contain a complete certificate table")
     if not certificate_table_in_bounds:
-        raise PEError("certificate table extends beyond input")
+        raise PEError(
+            "certificate table extends beyond input: "
+            f"offset={certificate_offset} size={certificate_size} "
+            f"end={certificate_end} file_size={len(data)}"
+        )
 
     section_table_end = optional_end + section_count * 40
     if section_table_end > len(data):
