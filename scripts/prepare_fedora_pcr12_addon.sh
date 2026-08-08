@@ -26,8 +26,8 @@ ukify=$(realpath "${ATTESTOS_FEDORA_UKIFY:?missing pinned Fedora ukify}")
 addon_stub=$(realpath "${ATTESTOS_FEDORA_ADDON_STUB:?missing pinned Fedora add-on stub}")
 policy='lockdown=confidentiality module.sig_enforce=1'
 owner_guid='9d4f4ef8-5f6d-4a73-9b2c-90c8e6c2e6f1'
-work=$(mktemp -d -p /tmp attestos-pcr12-addon.XXXXXX)
 mkdir -p "$output" "$(dirname "$output_vars")"
+work=$(mktemp -d -p "$(dirname "$output")" .attestos-pcr12-addon.XXXXXX)
 
 for command in jq objcopy objdump openssl podman python3 sbverify sha256sum sudo virt-fw-vars; do
     command -v "$command" >/dev/null || {
@@ -84,6 +84,14 @@ sudo podman run \
 addon="$work/10-attestos-policy.addon.efi"
 sudo chown "$(id -u):$(id -g)" "$addon"
 test -s "$addon"
+unsigned_size=$(stat -c %s "$unsigned")
+signed_size=$(stat -c %s "$addon")
+printf 'addon_signer_output unsigned_size=%s signed_size=%s\n' \
+    "$unsigned_size" "$signed_size"
+[[ "$signed_size" -gt "$unsigned_size" ]] || {
+    echo "signed add-on did not grow a certificate table" >&2
+    exit 1
+}
 sbverify --cert "$work/addon.pem" "$addon" >/dev/null
 if objdump -h "$addon" | awk '$2 == ".linux" {found=1} END {exit !found}'; then
     echo "cmdline addon unexpectedly contains a .linux section" >&2

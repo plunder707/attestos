@@ -52,6 +52,10 @@ though it successfully signed the full UKI control. Its Fedora base, exact
 and recorded. The signed add-on must also survive strict PE parsing, static
 signature verification, firmware admission, and a post-signature tamper
 negative; signer exit status alone is never evidence of a valid artifact.
+The bind-mounted signing workspace is created beside the eventual evidence
+output so the signer and host parser observe the same filesystem; a runner
+`/tmp` handoff that truncated a small signed PE during development is excluded
+from the frozen path.
 
 ## Admission Gates
 

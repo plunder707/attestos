@@ -293,6 +293,8 @@ def test_scripts_preserve_nonpublication_and_private_key_boundary():
     assert "ATTESTOS_FEDORA_SIGNER_IMAGE" in preparer
     assert "ATTESTOS_SYSTEMD_SBSIGN_SHA256" in preparer
     assert "ATTESTOS_SYSTEMD_SHARED_OBJECT_SHA256" in preparer
+    assert 'mktemp -d -p "$(dirname "$output")"' in preparer
+    assert "signed add-on did not grow a certificate table" in preparer
     assert "--network=none" in preparer
     assert "10-attestos-policy.unsigned.addon.efi" in preparer
     assert "--add-db" in preparer
