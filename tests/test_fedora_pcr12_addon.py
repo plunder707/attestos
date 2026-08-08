@@ -149,6 +149,33 @@ def boot_input(arm_evidence: dict) -> dict:
     }
 
 
+def boot_attempts(arm_evidence: dict, selected: int = 1) -> dict:
+    attempts = []
+    if selected == 2:
+        attempts.append({
+            "attempt": 1,
+            "exit_status": 124,
+            "guest_receipt_present": False,
+            "retry_eligible": True,
+            "disk_sha256_before_boot": arm_evidence["disk_sha256_after_install"],
+        })
+    attempts.append({
+        "attempt": selected,
+        "exit_status": 0,
+        "guest_receipt_present": True,
+        "retry_eligible": False,
+        "disk_sha256_before_boot": arm_evidence["disk_sha256_after_install"],
+    })
+    return {
+        "format": "attestos.fedora_sealed_boot_attempts/v1",
+        "source_disk_sha256": arm_evidence["disk_sha256_after_install"],
+        "max_attempts": 2,
+        "selected_attempt": selected,
+        "attempts": attempts,
+        **non_authority(),
+    }
+
+
 def guest(kind: str) -> dict:
     if kind == "baseline":
         pcr12, stub_parameters, tokens, addons = ZERO, None, ["rw"], []
@@ -192,12 +219,13 @@ def evaluate_with(
     return validator.evaluate(
         static_evidence(), firmware(), addon_static_evidence or addon_static(), baseline_arm,
         baseline_boot_input or boot_input(baseline_arm),
+        boot_attempts(baseline_arm),
         baseline_guest or guest("baseline"),
-        signed_arm_one, boot_input(signed_arm_one),
+        signed_arm_one, boot_input(signed_arm_one), boot_attempts(signed_arm_one),
         signed_guest_one or guest("signed"),
-        signed_arm_two, boot_input(signed_arm_two),
+        signed_arm_two, boot_input(signed_arm_two), boot_attempts(signed_arm_two, selected=2),
         signed_guest_two or guest("signed"),
-        tampered_arm, boot_input(tampered_arm),
+        tampered_arm, boot_input(tampered_arm), boot_attempts(tampered_arm),
         tampered_guest or guest("tampered"),
     )
 
@@ -207,6 +235,13 @@ def test_complete_three_arm_contract_passes():
     assert result["passed"] is True
     assert all(result["gates"].values())
     assert result["authority"] == "harness_pcr12_addon_only"
+    assert result["selected_boot_attempts"]["signed_two"] == 2
+
+
+def test_boot_attempt_manifest_cannot_hide_a_completed_adverse_receipt():
+    evidence = boot_attempts(arm("signed", ADDON), selected=2)
+    evidence["attempts"][0]["guest_receipt_present"] = True
+    assert validator.boot_attempts_join(evidence, arm("signed", ADDON)) is False
 
 
 def test_pcr11_change_refutes_additive_claim():
@@ -298,6 +333,7 @@ def test_scripts_preserve_nonpublication_and_private_key_boundary():
     preparer = (ROOT / "scripts/prepare_fedora_pcr12_addon.sh").read_text()
     installer = (ROOT / "scripts/install_fedora_pcr12_arm.sh").read_text()
     runner = (ROOT / "scripts/run_fedora_sealed_positive_control.sh").read_text()
+    retry = (ROOT / "scripts/run_fedora_sealed_retry.sh").read_text()
     workflow = (
         ROOT / ".github/workflows/fedora-sealed-uki-positive-control.yml"
     ).read_text()
@@ -327,6 +363,7 @@ def test_scripts_preserve_nonpublication_and_private_key_boundary():
     assert "base disk unexpectedly contains" in installer
     assert "attestos.fedora_sealed_boot_input/v1" in runner
     assert "disk_sha256: $disk_sha256" in runner
+    assert '[[ $rc -eq 124 && "$receipt" == false ]]' in retry
     assert "permissions:\n  contents: read" in workflow
     assert "packages: write" not in workflow
     assert "attestos PCR12 disposable canary" in workflow

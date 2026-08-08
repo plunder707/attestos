@@ -34,7 +34,7 @@ OVMF variable store, a fresh swtpm, TCG acceleration, and no guest network.
 | Arm | ESP add-ons | Expected result |
 | --- | --- | --- |
 | baseline | none | UKI boots; PCR 11 nonzero; PCR 12 zero; parameter EFI variable unset |
-| signed-1 | one valid signed add-on | policy present; EFI variable `12`; PCR 12 nonzero |
+| signed-1 | one valid signed add-on | policy present; PCR 12 equals the exact load-options replay |
 | signed-2 | the identical valid add-on | same PCR 11 and PCR 12 as signed-1 |
 | tampered | same file with `.cmdline` bytes changed after signing | UKI boots; add-on remains on disk but is ignored; baseline PCR 12 and policy |
 
@@ -85,6 +85,12 @@ All gates must pass:
 10. the tampered guest still boots the unchanged UKI but does not apply or
     measure the add-on; and
 11. manufacturer, policy, and production trust remain explicitly false.
+
+Each boot may retry once only after exit `124` when no bounded guest receipt can
+be extracted. The retry uses a byte-identical disposable copy of the same arm
+disk, a fresh swtpm state, and a fresh copy of the same firmware variables. All
+attempt logs and the retry decision remain in the artifact. Firmware rejection,
+other failures, and any completed receipt are never retried.
 
 The tampered add-on is rejected by `systemd-stub`, not by firmware as a boot
 target. Requiring the whole boot to fail would test the wrong component.

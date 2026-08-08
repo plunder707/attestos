@@ -128,18 +128,31 @@ wait "$driver_pid" >/dev/null 2>&1 || true
 driver_pid=""
 set -e
 
+extract_guest_evidence() {
+    rm -f "$output/guest-evidence.json"
+    debugfs -R "dump /guest-evidence.json $output/guest-evidence.json" "$probe" \
+        > "$output/debugfs.log" 2>&1 || return 1
+    test -s "$output/guest-evidence.json" || return 1
+    jq -e \
+        '.format == "attestos.fedora_sealed_guest/v1" and (.success | type == "boolean")' \
+        "$output/guest-evidence.json" >/dev/null
+}
+
 if [[ $qemu_rc -ne 0 ]]; then
+    if extract_guest_evidence; then
+        echo "guest receipt existed despite nonzero QEMU status; refusing infrastructure retry" >&2
+    else
+        rm -f "$output/guest-evidence.json"
+    fi
     echo "QEMU exited with status $qemu_rc" >&2
     tail -200 "$serial" >&2 || true
     tail -100 "$output/console-driver.log" >&2 || true
     exit "$qemu_rc"
 fi
 
-debugfs -R "dump /guest-evidence.json $output/guest-evidence.json" "$probe" \
-    > "$output/debugfs.log" 2>&1 || {
-        tail -100 "$output/console-driver.log" >&2 || true
-        cat "$output/debugfs.log" >&2 || true
-        exit 1
-    }
-test -s "$output/guest-evidence.json"
+extract_guest_evidence || {
+    tail -100 "$output/console-driver.log" >&2 || true
+    cat "$output/debugfs.log" >&2 || true
+    exit 1
+}
 qemu-img check "$disk"

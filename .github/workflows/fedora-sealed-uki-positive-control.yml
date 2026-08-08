@@ -110,6 +110,7 @@ jobs:
           bash -n scripts/prepare_fedora_sealed_compat_control.sh
           bash -n scripts/prepare_fedora_pcr12_addon.sh
           bash -n scripts/run_fedora_sealed_positive_control.sh
+          bash -n scripts/run_fedora_sealed_retry.sh
           bash -n scripts/tamper_fedora_sealed_uki.sh
 
       - name: Pin matching Fedora systemd add-on builder
@@ -491,24 +492,24 @@ jobs:
       - name: Boot baseline PCR 12 arm
         run: |
           set -euxo pipefail
-          bash scripts/run_fedora_sealed_positive_control.sh \
+          bash scripts/run_fedora_sealed_retry.sh \
             fedora-output/pcr12-baseline.qcow2 \
             fedora-output/pcr12/baseline-boot
 
       - name: Boot signed PCR 12 add-on twice
         run: |
           set -euxo pipefail
-          bash scripts/run_fedora_sealed_positive_control.sh \
+          bash scripts/run_fedora_sealed_retry.sh \
             fedora-output/pcr12-signed-one.qcow2 \
             fedora-output/pcr12/signed-one-boot
-          bash scripts/run_fedora_sealed_positive_control.sh \
+          bash scripts/run_fedora_sealed_retry.sh \
             fedora-output/pcr12-signed-two.qcow2 \
             fedora-output/pcr12/signed-two-boot
 
       - name: Boot tampered PCR 12 add-on negative
         run: |
           set -euxo pipefail
-          bash scripts/run_fedora_sealed_positive_control.sh \
+          bash scripts/run_fedora_sealed_retry.sh \
             fedora-output/pcr12-tampered.qcow2 \
             fedora-output/pcr12/tampered-boot
 
@@ -521,15 +522,19 @@ jobs:
             --addon-static fedora-output/pcr12/addon-static.json \
             --baseline-arm fedora-output/pcr12/baseline-arm.json \
             --baseline-boot-input fedora-output/pcr12/baseline-boot/boot-input.json \
+            --baseline-boot-attempts fedora-output/pcr12/baseline-boot/boot-attempts.json \
             --baseline-guest fedora-output/pcr12/baseline-boot/guest-evidence.json \
             --signed-arm-one fedora-output/pcr12/signed-one-arm.json \
             --signed-boot-input-one fedora-output/pcr12/signed-one-boot/boot-input.json \
+            --signed-boot-attempts-one fedora-output/pcr12/signed-one-boot/boot-attempts.json \
             --signed-guest-one fedora-output/pcr12/signed-one-boot/guest-evidence.json \
             --signed-arm-two fedora-output/pcr12/signed-two-arm.json \
             --signed-boot-input-two fedora-output/pcr12/signed-two-boot/boot-input.json \
+            --signed-boot-attempts-two fedora-output/pcr12/signed-two-boot/boot-attempts.json \
             --signed-guest-two fedora-output/pcr12/signed-two-boot/guest-evidence.json \
             --tampered-arm fedora-output/pcr12/tampered-arm.json \
             --tampered-boot-input fedora-output/pcr12/tampered-boot/boot-input.json \
+            --tampered-boot-attempts fedora-output/pcr12/tampered-boot/boot-attempts.json \
             --tampered-guest fedora-output/pcr12/tampered-boot/guest-evidence.json \
             --output fedora-output/pcr12/addon-canary.json
 
@@ -550,6 +555,15 @@ jobs:
             fedora-output/pcr12/*-boot/guest-evidence.json
             fedora-output/pcr12/*-boot/boot-input.json
             fedora-output/pcr12/*-boot/serial.log
+            fedora-output/pcr12/*-boot/console-driver.log
+            fedora-output/pcr12/*-boot/debugfs.log
+            fedora-output/pcr12/*-boot/boot-attempts.json
+            fedora-output/pcr12/*-boot/attempts/*/boot-input.json
+            fedora-output/pcr12/*-boot/attempts/*/guest-evidence.json
+            fedora-output/pcr12/*-boot/attempts/*/serial.log
+            fedora-output/pcr12/*-boot/attempts/*/console-driver.log
+            fedora-output/pcr12/*-boot/attempts/*/debugfs.log
+            fedora-output/pcr12/*-boot/attempts/*/screen-*.ppm
             fedora-output/pcr12/addon-canary.json
           if-no-files-found: warn
           retention-days: 14
@@ -564,15 +578,19 @@ jobs:
             --addon-static fedora-output/pcr12/addon-static.json \
             --baseline-arm fedora-output/pcr12/baseline-arm.json \
             --baseline-boot-input fedora-output/pcr12/baseline-boot/boot-input.json \
+            --baseline-boot-attempts fedora-output/pcr12/baseline-boot/boot-attempts.json \
             --baseline-guest fedora-output/pcr12/baseline-boot/guest-evidence.json \
             --signed-arm-one fedora-output/pcr12/signed-one-arm.json \
             --signed-boot-input-one fedora-output/pcr12/signed-one-boot/boot-input.json \
+            --signed-boot-attempts-one fedora-output/pcr12/signed-one-boot/boot-attempts.json \
             --signed-guest-one fedora-output/pcr12/signed-one-boot/guest-evidence.json \
             --signed-arm-two fedora-output/pcr12/signed-two-arm.json \
             --signed-boot-input-two fedora-output/pcr12/signed-two-boot/boot-input.json \
+            --signed-boot-attempts-two fedora-output/pcr12/signed-two-boot/boot-attempts.json \
             --signed-guest-two fedora-output/pcr12/signed-two-boot/guest-evidence.json \
             --tampered-arm fedora-output/pcr12/tampered-arm.json \
             --tampered-boot-input fedora-output/pcr12/tampered-boot/boot-input.json \
+            --tampered-boot-attempts fedora-output/pcr12/tampered-boot/boot-attempts.json \
             --tampered-guest fedora-output/pcr12/tampered-boot/guest-evidence.json \
             --output fedora-output/pcr12/addon-canary.json \
             --enforce

@@ -111,6 +111,42 @@ def boot_input_join(boot: dict, arm: dict, addon_static: dict, firmware: dict) -
     )
 
 
+def boot_attempts_join(manifest: dict, arm: dict) -> bool:
+    attempts = manifest.get("attempts")
+    selected = manifest.get("selected_attempt")
+    if not (
+        manifest.get("format") == "attestos.fedora_sealed_boot_attempts/v1"
+        and manifest.get("max_attempts") == 2
+        and selected in (1, 2)
+        and isinstance(attempts, list)
+        and len(attempts) == selected
+        and manifest.get("source_disk_sha256") == arm.get("disk_sha256_after_install")
+    ):
+        return False
+    for index, attempt in enumerate(attempts, start=1):
+        if not (
+            isinstance(attempt, dict)
+            and attempt.get("attempt") == index
+            and attempt.get("disk_sha256_before_boot") ==
+            arm.get("disk_sha256_after_install")
+        ):
+            return False
+        if index == selected:
+            if not (
+                attempt.get("exit_status") == 0
+                and attempt.get("guest_receipt_present") is True
+                and attempt.get("retry_eligible") is False
+            ):
+                return False
+        elif not (
+            attempt.get("exit_status") == 124
+            and attempt.get("guest_receipt_present") is False
+            and attempt.get("retry_eligible") is True
+        ):
+            return False
+    return True
+
+
 def guest_common(guest: dict, uki_sha256: str) -> bool:
     return (
         guest.get("format") == "attestos.fedora_sealed_guest/v1"
@@ -146,22 +182,27 @@ def evaluate(
     addon_static: dict,
     baseline_arm: dict,
     baseline_boot_input: dict,
+    baseline_boot_attempts: dict,
     baseline: dict,
     signed_arm_one: dict,
     signed_boot_input_one: dict,
+    signed_boot_attempts_one: dict,
     signed_one: dict,
     signed_arm_two: dict,
     signed_boot_input_two: dict,
+    signed_boot_attempts_two: dict,
     signed_two: dict,
     tampered_arm: dict,
     tampered_boot_input: dict,
+    tampered_boot_attempts: dict,
     tampered: dict,
 ) -> dict:
     artifacts = (
-        static, addon_static, baseline_arm, baseline_boot_input, baseline,
-        signed_arm_one, signed_boot_input_one, signed_one, signed_arm_two,
-        signed_boot_input_two, signed_two, tampered_arm, tampered_boot_input,
-        tampered,
+        static, addon_static, baseline_arm, baseline_boot_input,
+        baseline_boot_attempts, baseline, signed_arm_one, signed_boot_input_one,
+        signed_boot_attempts_one, signed_one, signed_arm_two,
+        signed_boot_input_two, signed_boot_attempts_two, signed_two,
+        tampered_arm, tampered_boot_input, tampered_boot_attempts, tampered,
     )
     enforce_non_authority(*artifacts)
 
@@ -256,6 +297,12 @@ def evaluate(
             boot_input_join(signed_boot_input_two, signed_arm_two, addon_static, firmware),
             boot_input_join(tampered_boot_input, tampered_arm, addon_static, firmware),
         )),
+        "bounded_boot_attempts_joined": all((
+            boot_attempts_join(baseline_boot_attempts, baseline_arm),
+            boot_attempts_join(signed_boot_attempts_one, signed_arm_one),
+            boot_attempts_join(signed_boot_attempts_two, signed_arm_two),
+            boot_attempts_join(tampered_boot_attempts, tampered_arm),
+        )),
         "all_guests_booted_common_uki": (
             uki_sha256 is not None
             and all(guest_common(guest, uki_sha256) for guest in guests)
@@ -313,6 +360,12 @@ def evaluate(
             "tampered": tampered.get("stub_pcr_kernel_parameters"),
         },
         "tampered_pcr12_sha256": pcr(tampered, "12"),
+        "selected_boot_attempts": {
+            "baseline": baseline_boot_attempts.get("selected_attempt"),
+            "signed_one": signed_boot_attempts_one.get("selected_attempt"),
+            "signed_two": signed_boot_attempts_two.get("selected_attempt"),
+            "tampered": tampered_boot_attempts.get("selected_attempt"),
+        },
         "manufacturer_trusted": False,
         "policy_trusted": False,
         "production_trusted": False,
@@ -332,10 +385,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     for name in (
         "static", "firmware", "addon_static", "baseline_arm",
-        "baseline_boot_input", "baseline_guest", "signed_arm_one",
-        "signed_boot_input_one", "signed_guest_one", "signed_arm_two",
-        "signed_boot_input_two", "signed_guest_two", "tampered_arm",
-        "tampered_boot_input", "tampered_guest",
+        "baseline_boot_input", "baseline_boot_attempts", "baseline_guest",
+        "signed_arm_one", "signed_boot_input_one", "signed_boot_attempts_one",
+        "signed_guest_one", "signed_arm_two", "signed_boot_input_two",
+        "signed_boot_attempts_two", "signed_guest_two", "tampered_arm",
+        "tampered_boot_input", "tampered_boot_attempts", "tampered_guest",
     ):
         parser.add_argument(f"--{name.replace('_', '-')}", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -347,15 +401,19 @@ def main() -> int:
         load_object(args.addon_static),
         load_object(args.baseline_arm),
         load_object(args.baseline_boot_input),
+        load_object(args.baseline_boot_attempts),
         load_object(args.baseline_guest),
         load_object(args.signed_arm_one),
         load_object(args.signed_boot_input_one),
+        load_object(args.signed_boot_attempts_one),
         load_object(args.signed_guest_one),
         load_object(args.signed_arm_two),
         load_object(args.signed_boot_input_two),
+        load_object(args.signed_boot_attempts_two),
         load_object(args.signed_guest_two),
         load_object(args.tampered_arm),
         load_object(args.tampered_boot_input),
+        load_object(args.tampered_boot_attempts),
         load_object(args.tampered_guest),
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
