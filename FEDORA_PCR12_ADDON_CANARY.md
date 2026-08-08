@@ -61,6 +61,11 @@ is excluded from the frozen path. A second signer invocation is also excluded:
 the artifact that passes preflight is the artifact installed in both signed
 arms.
 
+Section inspection is performed on a scratch copy. GNU `objcopy
+--dump-section` may rewrite a PE input in place and discard its Authenticode
+overlay when no output path is supplied; the validated signed add-on is never
+passed to that operation directly.
+
 ## Admission Gates
 
 All gates must pass:

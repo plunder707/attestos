@@ -83,7 +83,10 @@ if ! objdump -h "$addon" | awk '$2 == ".sbat" {found=1} END {exit !found}'; then
     echo "cmdline addon does not contain the required .sbat section" >&2
     exit 1
 fi
-objcopy --dump-section .cmdline="$work/addon.cmdline" "$addon"
+cp --reflink=auto "$addon" "$work/addon.objcopy-input.efi"
+objcopy --dump-section .cmdline="$work/addon.cmdline" \
+    "$work/addon.objcopy-input.efi"
+rm -f "$work/addon.objcopy-input.efi"
 python3 - "$work/addon.cmdline" "$policy" <<'PY'
 import sys
 from pathlib import Path
