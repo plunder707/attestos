@@ -1,0 +1,6 @@
+ARG FEDORA_SIGNER_BASE=docker.io/library/fedora@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
+FROM ${FEDORA_SIGNER_BASE}
+
+COPY usr/lib/systemd/systemd-sbsign /usr/lib/systemd/systemd-sbsign
+COPY usr/lib64/systemd/libsystemd-shared-259.5-1.fc44.so \
+    /usr/lib64/systemd/libsystemd-shared-259.5-1.fc44.so

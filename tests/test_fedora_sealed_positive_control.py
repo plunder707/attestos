@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import struct
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -256,9 +258,26 @@ def test_cmdline_mutation_preserves_certificate_bytes_and_file_size():
     assert len(mutated) == len(source)
     assert mutated[:0x200] == source[:0x200]
     assert mutated[0x240:] == source[0x240:]
+    assert details["certificate_table_valid"] is True
     assert details["certificate_table_preserved"] is True
     assert details["file_size_unchanged"] is True
     assert details["original_cmdline_sha256"] != details["tampered_cmdline_sha256"]
+
+
+def test_cmdline_mutation_rejects_missing_certificate_directory():
+    source = bytearray(synthetic_signed_pe_with_cmdline())
+    struct.pack_into("<II", source, 0x128, 0, 0)
+    with pytest.raises(cmdline_mutator.PEError, match="certificate table"):
+        cmdline_mutator.mutate_cmdline(bytes(source))
+
+
+
+def test_cmdline_mutation_rejects_out_of_bounds_certificate_directory():
+    source = bytearray(synthetic_signed_pe_with_cmdline())
+    struct.pack_into("<II", source, 0x128, len(source) + 4096, 128)
+    with pytest.raises(cmdline_mutator.PEError, match="extends beyond input"):
+        cmdline_mutator.mutate_cmdline(bytes(source))
+
 
 
 def test_cmdline_dump_uses_disposable_objcopy_input(tmp_path, monkeypatch):
@@ -630,6 +649,85 @@ def test_firmware_rejection_stops_without_waiting_for_global_timeout():
     runner = (ROOT / "scripts/run_fedora_sealed_positive_control.sh").read_text()
     assert "Secure Boot firmware rejected the installed UKI" in runner
     assert "exit 80" in runner
+
+
+def test_receipt_aware_retry_is_bounded_and_preserves_attempts():
+    runner = (ROOT / "scripts/run_fedora_sealed_positive_control.sh").read_text()
+    retry = (ROOT / "scripts/run_fedora_sealed_retry.sh").read_text()
+    workflow = (
+        ROOT / ".github/workflows/fedora-sealed-uki-positive-control.yml"
+    ).read_text()
+    assert "max_attempts=2" in retry
+    assert '[[ $rc -eq 124 && "$receipt" == false ]]' in retry
+    assert '[[ "$retry_eligible" != true || $attempt -eq $max_attempts ]]' in retry
+    assert 'cp --reflink=auto --sparse=always "$disk" "$attempt_disk"' in retry
+    assert '[[ "$copied_sha256" == "$source_sha256" ]]' in retry
+    assert "attestos.fedora_sealed_boot_attempts/v1" in retry
+    assert "guest receipt existed despite nonzero QEMU status" in runner
+    assert "run_fedora_sealed_retry.sh" in workflow
+    assert "*-boot/attempts/*/screen-*.ppm" in workflow
+
+
+def test_receipt_less_timeout_retries_once_and_records_both_attempts(tmp_path):
+    disk = tmp_path / "arm.qcow2"
+    disk.write_bytes(b"immutable-arm")
+    fake = tmp_path / "fake-runner.sh"
+    fake.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+output=$2
+mkdir -p "$output"
+printf 'serial\n' > "$output/serial.log"
+printf '{"format":"attestos.fedora_sealed_boot_input/v1"}\n' > "$output/boot-input.json"
+if [[ "$output" == *attempt-1 ]]; then
+    exit 124
+fi
+printf '{"format":"attestos.fedora_sealed_guest/v1","success":true}\n' > "$output/guest-evidence.json"
+"""
+    )
+    output = tmp_path / "boot"
+    env = {**os.environ, "ATTESTOS_FEDORA_BOOT_RUNNER": str(fake)}
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/run_fedora_sealed_retry.sh"), str(disk), str(output)],
+        cwd=ROOT,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0
+    manifest = json.loads((output / "boot-attempts.json").read_text())
+    assert manifest["selected_attempt"] == 2
+    assert [item["exit_status"] for item in manifest["attempts"]] == [124, 0]
+    assert manifest["attempts"][0]["retry_eligible"] is True
+    assert (output / "guest-evidence.json").is_file()
+
+
+def test_timeout_with_completed_receipt_is_not_retried(tmp_path):
+    disk = tmp_path / "arm.qcow2"
+    disk.write_bytes(b"immutable-arm")
+    fake = tmp_path / "fake-runner.sh"
+    fake.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+output=$2
+mkdir -p "$output"
+printf '{"format":"attestos.fedora_sealed_guest/v1","success":false}\n' > "$output/guest-evidence.json"
+exit 124
+"""
+    )
+    output = tmp_path / "boot"
+    env = {**os.environ, "ATTESTOS_FEDORA_BOOT_RUNNER": str(fake)}
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/run_fedora_sealed_retry.sh"), str(disk), str(output)],
+        cwd=ROOT,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 124
+    manifest = json.loads((output / "boot-attempts.json").read_text())
+    assert manifest["selected_attempt"] is None
+    assert len(manifest["attempts"]) == 1
+    assert manifest["attempts"][0]["guest_receipt_present"] is True
+    assert manifest["attempts"][0]["retry_eligible"] is False
 
 
 def test_compatibility_resign_preserves_original_as_a_separate_negative_gate():

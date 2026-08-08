@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mutate a PE .cmdline section without rewriting its certificate table."""
+"""Mutate only a PE .cmdline section while preserving every outside byte."""
 
 from __future__ import annotations
 
@@ -22,7 +22,10 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def mutate_cmdline(data: bytes, suffix: bytes = DEFAULT_SUFFIX) -> tuple[bytes, dict]:
+def mutate_cmdline(
+    data: bytes,
+    suffix: bytes = DEFAULT_SUFFIX,
+) -> tuple[bytes, dict]:
     if not suffix or b"\0" in suffix:
         raise PEError("mutation suffix must be non-empty and contain no NUL")
     if len(data) < 0x40:
@@ -58,11 +61,19 @@ def mutate_cmdline(data: bytes, suffix: bytes = DEFAULT_SUFFIX) -> tuple[bytes, 
         "<II", data, certificate_directory
     )
     certificate_end = certificate_offset + certificate_size
-    if (
-        certificate_offset == 0 or certificate_size == 0 or
-        certificate_end > len(data)
-    ):
+    certificate_table_declared = certificate_offset != 0 or certificate_size != 0
+    certificate_table_complete = certificate_offset != 0 and certificate_size != 0
+    certificate_table_in_bounds = (
+        certificate_table_complete and certificate_end <= len(data)
+    )
+    if not certificate_table_complete:
         raise PEError("input does not contain a complete certificate table")
+    if not certificate_table_in_bounds:
+        raise PEError(
+            "certificate table extends beyond input: "
+            f"offset={certificate_offset} size={certificate_size} "
+            f"end={certificate_end} file_size={len(data)}"
+        )
 
     section_table_end = optional_end + section_count * 40
     if section_table_end > len(data):
@@ -81,8 +92,15 @@ def mutate_cmdline(data: bytes, suffix: bytes = DEFAULT_SUFFIX) -> tuple[bytes, 
             cmdline_sections.append((raw_offset, raw_size))
     if len(cmdline_sections) != 1:
         raise PEError(f"expected exactly one .cmdline section, found {len(cmdline_sections)}")
-    if certificate_offset < max_section_raw_end:
+    certificate_table_overlaps_sections = (
+        certificate_table_in_bounds and certificate_offset < max_section_raw_end
+    )
+    if certificate_table_overlaps_sections:
         raise PEError("certificate table overlaps section raw data")
+    certificate_table_valid = (
+        certificate_table_in_bounds and not certificate_table_overlaps_sections
+    )
+    certificate_table_present = certificate_table_valid
 
     raw_offset, raw_size = cmdline_sections[0]
     original_raw = data[raw_offset:raw_offset + raw_size]
@@ -96,14 +114,23 @@ def mutate_cmdline(data: bytes, suffix: bytes = DEFAULT_SUFFIX) -> tuple[bytes, 
     if len(encoded) > raw_size:
         raise PEError("mutated command line exceeds the existing section")
 
-    certificate_before = data[certificate_offset:certificate_end]
+    certificate_before = (
+        data[certificate_offset:certificate_end] if certificate_table_present else None
+    )
+    outside_cmdline_before = data[:raw_offset] + data[raw_offset + raw_size:]
     mutated = bytearray(data)
     mutated[raw_offset:raw_offset + raw_size] = encoded.ljust(raw_size, b"\0")
-    certificate_after = bytes(mutated[certificate_offset:certificate_end])
-    if certificate_after != certificate_before:
+    certificate_after = (
+        bytes(mutated[certificate_offset:certificate_end])
+        if certificate_table_present else None
+    )
+    if certificate_table_present and certificate_after != certificate_before:
         raise PEError("command-line mutation changed certificate-table bytes")
     if len(mutated) != len(data):
         raise PEError("command-line mutation changed file size")
+    outside_cmdline_after = bytes(mutated[:raw_offset] + mutated[raw_offset + raw_size:])
+    if outside_cmdline_after != outside_cmdline_before:
+        raise PEError("command-line mutation changed bytes outside its section")
 
     result = bytes(mutated)
     if result == data:
@@ -113,9 +140,24 @@ def mutate_cmdline(data: bytes, suffix: bytes = DEFAULT_SUFFIX) -> tuple[bytes, 
         "cmdline_raw_size": raw_size,
         "certificate_table_offset": certificate_offset,
         "certificate_table_size": certificate_size,
-        "certificate_table_sha256_before": sha256(certificate_before),
-        "certificate_table_sha256_after": sha256(certificate_after),
-        "certificate_table_preserved": True,
+        "certificate_table_declared": certificate_table_declared,
+        "certificate_table_complete": certificate_table_complete,
+        "certificate_table_in_bounds": certificate_table_in_bounds,
+        "certificate_table_overlaps_sections": certificate_table_overlaps_sections,
+        "certificate_table_valid": certificate_table_valid,
+        "certificate_table_present": certificate_table_present,
+        "certificate_table_sha256_before": (
+            sha256(certificate_before) if certificate_before is not None else None
+        ),
+        "certificate_table_sha256_after": (
+            sha256(certificate_after) if certificate_after is not None else None
+        ),
+        "certificate_table_preserved": (
+            certificate_after == certificate_before if certificate_table_present else None
+        ),
+        "outside_cmdline_sha256_before": sha256(outside_cmdline_before),
+        "outside_cmdline_sha256_after": sha256(outside_cmdline_after),
+        "only_cmdline_section_changed": True,
         "file_size_unchanged": True,
         "original_cmdline_sha256": sha256(original_cmdline),
         "tampered_cmdline_sha256": sha256(tampered_cmdline),
@@ -147,7 +189,8 @@ def main() -> int:
     print(json.dumps({
         "original_uki_sha256": receipt["original_uki_sha256"],
         "tampered_uki_sha256": receipt["tampered_uki_sha256"],
-        "certificate_table_preserved": True,
+        "certificate_table_preserved": receipt["certificate_table_preserved"],
+        "only_cmdline_section_changed": True,
     }, sort_keys=True))
     return 0
 

@@ -58,12 +58,12 @@ event-log replay policy. An EFI boot is not proof that a signed UKI was used.
 The current Bazzite-derived image is expected not to seal the attestos command
 line in a UKI.
 
-## UKI-capable base decision
+## Subsequent UKI decision
 
-The leading next candidate is a CentOS bootc-derived image such as Bluefin LTS,
-not because its name grants trust, but because its current build explicitly
-installs `kernel-uki-virt` and upstream bootc now contains the sealed UKI and
-composefs machinery. This is only source-backed candidacy.
+The initial source-backed candidate was Bluefin LTS. Its later booted canary
+made it a negative control: the guest used shim/GRUB with separate kernel and
+initramfs artifacts rather than the UKI found during static inspection.
+Package presence was correctly insufficient.
 
 A base switch requires a separate canary proving all of the following from the
 booted artifact:
@@ -75,8 +75,10 @@ booted artifact:
 5. update and rollback preserve those properties; and
 6. the key hierarchy is acceptable to the eventual relying party.
 
-Until then, Bazzite remains the product hypothesis and Bluefin LTS/CentOS bootc
-remains the UKI engineering candidate.
+The current positive-control substrate is Fedora sealed Atomic. It exists to
+freeze loaded-UKI, Secure Boot, PCR 11, and signed PCR 12 add-on evidence joins;
+it is not a selected gaming distribution. Bazzite remains the product
+hypothesis and remains held from policy admission.
 
 The candidate selection and its admission test are frozen in
 [`UKI_BASE_DECISION.md`](UKI_BASE_DECISION.md).

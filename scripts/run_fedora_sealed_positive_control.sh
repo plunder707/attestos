@@ -13,7 +13,7 @@ source_vars=${ATTESTOS_FEDORA_OVMF_VARS:?missing converted Fedora OVMF variable 
 code=${ATTESTOS_FEDORA_OVMF_CODE:?missing OVMF code paired with variable template}
 mkdir -p "$output"
 
-for command in debugfs mke2fs qemu-img qemu-system-x86_64 swtpm; do
+for command in debugfs jq mke2fs qemu-img qemu-system-x86_64 sha256sum swtpm; do
     command -v "$command" >/dev/null || {
         echo "missing required command: $command" >&2
         exit 1
@@ -34,6 +34,22 @@ cp "$source_vars" "$vars"
 cp scripts/fedora_sealed_guest_probe.py "$probe_root/fedora_sealed_guest_probe.py"
 truncate -s 64M "$probe"
 mke2fs -q -t ext4 -F -d "$probe_root" "$probe"
+jq -n \
+    --arg disk_sha256 "$(sha256sum "$disk" | cut -d' ' -f1)" \
+    --arg ovmf_code_sha256 "$(sha256sum "$code" | cut -d' ' -f1)" \
+    --arg ovmf_vars_source_sha256 "$(sha256sum "$source_vars" | cut -d' ' -f1)" \
+    '{
+      format: "attestos.fedora_sealed_boot_input/v1",
+      disk_sha256: $disk_sha256,
+      ovmf_code_sha256: $ovmf_code_sha256,
+      ovmf_vars_source_sha256: $ovmf_vars_source_sha256,
+      acceleration: "tcg",
+      guest_network: false,
+      fresh_swtpm_state: true,
+      manufacturer_trusted: false,
+      policy_trusted: false,
+      production_trusted: false
+    }' > "$output/boot-input.json"
 
 cleanup() {
     set +e
@@ -112,18 +128,31 @@ wait "$driver_pid" >/dev/null 2>&1 || true
 driver_pid=""
 set -e
 
+extract_guest_evidence() {
+    rm -f "$output/guest-evidence.json"
+    debugfs -R "dump /guest-evidence.json $output/guest-evidence.json" "$probe" \
+        > "$output/debugfs.log" 2>&1 || return 1
+    test -s "$output/guest-evidence.json" || return 1
+    jq -e \
+        '.format == "attestos.fedora_sealed_guest/v1" and (.success | type == "boolean")' \
+        "$output/guest-evidence.json" >/dev/null
+}
+
 if [[ $qemu_rc -ne 0 ]]; then
+    if extract_guest_evidence; then
+        echo "guest receipt existed despite nonzero QEMU status; refusing infrastructure retry" >&2
+    else
+        rm -f "$output/guest-evidence.json"
+    fi
     echo "QEMU exited with status $qemu_rc" >&2
     tail -200 "$serial" >&2 || true
     tail -100 "$output/console-driver.log" >&2 || true
     exit "$qemu_rc"
 fi
 
-debugfs -R "dump /guest-evidence.json $output/guest-evidence.json" "$probe" \
-    > "$output/debugfs.log" 2>&1 || {
-        tail -100 "$output/console-driver.log" >&2 || true
-        cat "$output/debugfs.log" >&2 || true
-        exit 1
-    }
-test -s "$output/guest-evidence.json"
+extract_guest_evidence || {
+    tail -100 "$output/console-driver.log" >&2 || true
+    cat "$output/debugfs.log" >&2 || true
+    exit 1
+}
 qemu-img check "$disk"

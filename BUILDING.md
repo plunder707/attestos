@@ -33,8 +33,9 @@ the Bazzite image preview and does not produce an installable image.
 1. Fork this repository on GitHub.
 2. Open **Actions > Fedora sealed UKI positive control**.
 3. Choose **Run workflow** on the commit you want to test.
-4. Wait for **systemd-boot / loaded UKI / PCR 11** to finish.
-5. Download the bounded artifact and inspect `positive-control.json`.
+4. Wait for **systemd-boot / loaded UKI / PCR 11 + PCR 12 add-on** to finish.
+5. Download the bounded artifacts and inspect `positive-control.json` and
+   `pcr12/addon-canary.json`.
 
 A pass requires all 13 gates to be `true`, `failed_gates` to be empty, and
 `authority` to equal `harness_positive_control_only`. The receipt must keep
@@ -48,6 +49,22 @@ firmware selection, the loaded-file hash, Secure Boot rejection of an unsigned
 `.cmdline` mutation, and nonzero SHA-256 PCR 11. See
 [`FEDORA_SEALED_POSITIVE_CONTROL.md`](FEDORA_SEALED_POSITIVE_CONTROL.md) for
 the frozen inputs, stop rules, and exact non-claims.
+
+The PCR 12 add-on lane is a separate causal experiment in the same workflow.
+It compares no add-on, two boots of one byte-identical signed policy add-on,
+and a post-signature tamper. A pass requires the upstream UKI and PCR 11 to
+remain unchanged, both signed boots to apply each policy token exactly once,
+PCR 12 to equal the exact systemd-stub load-options replay, and the tampered
+add-on to be ignored. Receipt-less TCG timeouts may retry once from a byte-
+identical disposable disk copy; every attempt and retry decision is retained
+and joined by the validator. See
+[`FEDORA_PCR12_ADDON_CANARY.md`](FEDORA_PCR12_ADDON_CANARY.md).
+
+The replicated reference is
+[run 31234464516](https://github.com/plunder707/attestos/actions/runs/31234464516),
+attempts 1 and 2. Both attempts passed all 21 PCR 12 gates and independently
+reproduced the same PCR 11 and exact PCR 12 values. The run-local signed file
+hash is expected to change because each attempt creates a fresh disposable key.
 
 ## Local source tests
 
