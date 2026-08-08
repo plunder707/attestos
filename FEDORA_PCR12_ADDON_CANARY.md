@@ -1,7 +1,7 @@
 # Fedora PCR 12 Signed Add-on Canary
 
-Status: development-only harness experiment. It grants no attestation trust,
-installation authority, or publication authority.
+Status: replicated harness pass. It grants no attestation trust, installation
+authority, or publication authority.
 
 ## Question
 
@@ -122,6 +122,31 @@ SHA256(32 zero bytes ||
 The EFI variable remains in every guest receipt as a diagnostic. This checker
 correction does not retroactively turn run `31230053715` green; a fresh run and
 same-head replication are required.
+
+## Result
+
+The corrected contract passed on both
+[attempt 1](https://github.com/plunder707/attestos/actions/runs/31234464516/attempts/1)
+and
+[attempt 2](https://github.com/plunder707/attestos/actions/runs/31234464516/attempts/2)
+from branch commit `e897e51`. All 21 gates passed in both attempts, with no
+infrastructure retry selected in either one.
+
+Stable causal evidence across attempts:
+
+```text
+loaded UKI  6fe6684e9f3ad09008e84e63424bfa4faf2ec2d40214f7bd314c8fb9b9130b50
+PCR 11      44792fb514e1c22a77758a89bd1459727a80534e7963a708c6574f8d895ed6d4
+baseline 12 0000000000000000000000000000000000000000000000000000000000000000
+signed 12   ca62dd5f79fa336fadc40c4b2f6ef3b1870d58d271fd01b6f96a758f25cda8f5
+tampered 12 0000000000000000000000000000000000000000000000000000000000000000
+```
+
+The run-local certificate changed between attempts, so the signed add-on file
+hash changed. That is expected. The policy bytes and exact PCR 12 replay did
+not change. Receipt SHA-256 values were
+`dd82647ff52c3abcb424f629f9ec1b64fa8908a347f6e2def81d4024f543bfae`
+and `c5e822aa3a7ca4c99d2a8fb52ee5c2dc559f15f3f2c1620fdcbb658c1e7676c8`.
 
 ## Boundary
 

@@ -31,14 +31,14 @@ which is a valid baseline when no external command-line inputs are supplied;
 it remains mandatory in the signed quote selection but is not independently a
 nonzero admission gate.
 
-## 2. UKI-capable base admission - harness control passed, policy held
+## 2. Authenticated pre-kernel policy - harness passed, integration held
 
-- Build and boot the pinned Bluefin LTS/CentOS bootc candidate.
-- Prove the firmware selected the intended signed UKI.
-- Parse the UKI and match its embedded command line to the approved policy.
-- Reproduce PCR/event-log evidence from the booted artifact.
-- Add substitution negatives for the UKI and command line.
-- Verify update and rollback preserve the same invariants.
+- Reject base candidates that expose a UKI statically but boot another path.
+- Prove the firmware-selected UKI and loaded-file hash match static inspection.
+- Keep the upstream UKI and PCR 11 fixed while adding authenticated policy.
+- Reproduce the exact PCR 12 load-options measurement across fresh boots.
+- Reject a post-signature policy mutation without preventing the base UKI boot.
+- Keep update, rollback, event-log replay, and production keys as later gates.
 
 Stop if package presence is the only UKI evidence, the signature chain is
 unverified, event-log replay cannot reproduce the quote, or a substitution
@@ -52,10 +52,17 @@ the harness's loaded-UKI identity, Secure Boot tamper-negative, and PCR 11
 joins, but contains no attestos policy and does not advance manufacturer,
 policy, or production trust.
 
-The next bounded experiment must build the attestos agent and policy into a
-new sealed image before UKI creation, then replay the relevant event logs and
-verify a signed quote outside the guest. The positive-control guest receipt is
-observation evidence, not a production attestation token.
+The bounded mechanism uses the unchanged Fedora UKI plus one separately signed
+systemd command-line add-on. Its frozen baseline, two signed boots, and tamper
+negative passed twice in run `31234464516`: PCR 11 remained unchanged and the
+accepted policy extended PCR 12 to the exact replayed value. This avoids
+rebuilding the upstream kernel for each policy change, but it does not solve
+key enrollment, revocation, ordering, updates, or relying-party acceptance.
+
+After that mechanism is reproducible, a separate integration must build the
+attestos agent into a sealed candidate, replay the relevant event logs, and
+verify a signed quote outside the guest. Harness guest receipts remain
+observation evidence, not production attestation tokens.
 
 ## 3. Policy verifier
 

@@ -1,8 +1,8 @@
 # attestos
 
-Bazzite with a TPM boot attestation layer on top, so an anti-cheat vendor can
-verify what the machine actually booted instead of checking whether the distro
-name is on a list.
+Experimental Linux boot-attestation image and evidence harness for testing what
+an anti-cheat vendor could verify instead of relying on a distribution-name
+allowlist.
 
 The mechanism, the threat model, and the vendor specification live in
 [plunder707/attested-gaming](https://github.com/plunder707/attested-gaming).
@@ -10,7 +10,7 @@ This repository is the image that produces the evidence.
 
 ---
 
-> ## STATUS: SOURCE MECHANICS PREVIEW. UKI/POLICY TRUST BLOCKED.
+> ## STATUS: SOURCE MECHANICS PREVIEW. NOT INSTALLABLE OR PRODUCTION-TRUSTED.
 >
 > GitHub Actions runs
 > [31157890393](https://github.com/plunder707/attestos/actions/runs/31157890393)
@@ -45,14 +45,24 @@ This repository is the image that produces the evidence.
 > harness control only: all manufacturer, policy, and production trust flags
 > remain false, and it does not make the Bazzite preview installable.
 >
+> The separate signed PCR 12 policy-addon lane then passed twice on
+> [run 31234464516](https://github.com/plunder707/attestos/actions/runs/31234464516).
+> The upstream UKI and PCR 11 stayed byte-identical; both signed boots applied
+> `lockdown=confidentiality module.sig_enforce=1` exactly once and reproduced
+> PCR 12 `ca62dd5f...a8f5`; the post-signature tamper was rejected and returned
+> to the zero-PCR-12 baseline. This proves a bounded mechanism, not a deployable
+> key hierarchy or operating-system trust policy.
+>
 > This source is available for review and reproducible emulation. No GHCR
 > image is published and it is not an installable trusted distribution.
 
 The completed Bazzite experiment is specified in
 [`BOOTED_IMAGE_CANARY.md`](BOOTED_IMAGE_CANARY.md). Reproduction and source
-build instructions are in [`BUILDING.md`](BUILDING.md). The next UKI
-engineering candidate and its independent admission criteria are recorded in
-[`UKI_BASE_DECISION.md`](UKI_BASE_DECISION.md).
+build instructions are in [`BUILDING.md`](BUILDING.md). UKI base evidence and
+its independent admission criteria are recorded in
+[`UKI_BASE_DECISION.md`](UKI_BASE_DECISION.md). The signed PCR 12 policy-addon
+experiment is specified separately in
+[`FEDORA_PCR12_ADDON_CANARY.md`](FEDORA_PCR12_ADDON_CANARY.md).
 The milestone order and stop rules are tracked in [`ROADMAP.md`](ROADMAP.md).
 The separate loaded-UKI harness control is specified in
 [`FEDORA_SEALED_POSITIVE_CONTROL.md`](FEDORA_SEALED_POSITIVE_CONTROL.md).
@@ -84,17 +94,20 @@ Bazzite is also designed to be layered. It is an OCI image, so this repo is a
 Containerfile and a GitHub Action rather than a distribution with mirrors and
 installers behind it.
 
-## The command line has to be sealed inside the UKI
+## The policy has to be authenticated and measured before the kernel
 
 This is the part that decides whether any of it means anything.
 `lockdown=confidentiality` blocks `/dev/mem`, kprobes against a running
 kernel, and unsigned module loading. That guarantee is worth nothing if the
-command line lives in a bootloader config the user can edit, because then a
-cheater deletes the argument, boots a kernel whose measurement has not
-changed, and attests perfectly clean while loading whatever they want.
+policy lives only in a bootloader config the user can edit. Otherwise a user
+can delete the arguments, boot the same kernel measurement, and present a
+quote that says nothing about the missing policy.
 
-A Unified Kernel Image binds kernel, initrd, and command line into one signed
-PE binary measured into PCR 11, so changing any part moves the measurement.
+A Unified Kernel Image binds kernel, initrd, and its embedded command line into
+one signed PE binary measured into PCR 11. A separately signed systemd command-
+line add-on can extend additional policy into PCR 12 while leaving that upstream
+UKI unchanged. Either route must be joined to the exact loaded artifact and
+replayed by the verifier; file presence or a nonzero PCR is not enough.
 
 **Bazzite does not do UKI, and this is now confirmed rather than suspected.**
 Its Containerfile actively excludes the UKI kernel packages:
@@ -109,27 +122,25 @@ image ships is currently a declaration of intent and nothing more: without a
 UKI there is nothing sealing it, a user can edit it at the bootloader, and
 PCR 11 does not measure what the design assumes it measures.
 
-Fixing this is not a line in `build.sh`. It means installing `systemd-ukify`,
-generating and signing a UKI, and redirecting the boot path away from the
-kernel handling Bazzite already does, against a base that excludes the UKI
-packages on purpose. That is a change to how the image boots, not a layer on
-top of it.
+Fixing Bazzite is not a line in `build.sh`. It requires a trusted pre-kernel
+measurement path, whether by changing how the image boots or by adopting a base
+that already boots through systemd-stub.
 
-The source investigation now narrows the practical choices:
+The experiments narrow the practical choices:
 
 1. Do the UKI work on Bazzite anyway and accept the divergence from the base.
-2. Move to a CentOS bootc-derived base that carries a prebuilt UKI. Bluefin
-   LTS is the leading engineering candidate because its current build
-   explicitly installs `kernel-uki-virt`, and upstream bootc has landed sealed
-   UKI/composefs machinery. This is a candidate, not a trust result.
-3. Find a measurement that does not depend on a UKI. Harder, because the
-   whole point of the UKI is that it seals a command line the user would
-   otherwise be able to edit.
+2. Use an upstream sealed Fedora UKI and add attestos policy through a separately
+   signed systemd add-on measured into PCR 12.
+3. Find another authenticated pre-kernel measurement path. A measurement made
+   only after the kernel starts is a weaker evidence class and must not be
+   presented as equivalent.
 
-## The Secure Boot problem, unsolved
+## The key-admission problem, unsolved
 
-A third-party kernel is not signed by Microsoft's UEFI CA, so PCR 7 will not
-say what it says on a stock distribution. The options are:
+An upstream Fedora UKI can retain its distribution signature, but a separate
+attestos policy add-on still needs a signing key admitted by firmware, Shim, or
+MOK. A third-party kernel has the larger version of the same problem. The
+deployment options are:
 
 - **MOK enrollment**, where the user enrols a Machine Owner Key through a blue
   firmware screen on first boot. Universal Blue already does this for
@@ -140,9 +151,10 @@ say what it says on a stock distribution. The options are:
   is a review process rather than a form.
 - **User-owned PK and KEK**, which gives full control and almost no adoption.
 
-There is no good answer here yet. It is the most likely place the whole plan
-stalls, and it is a question for a vendor before it is a question for an
-engineer.
+The disposable Fedora harness enrolls a run-local certificate into a copied
+UEFI DB and proves the mechanism without claiming a deployment model. There is
+still no accepted end-user key-enrollment, revocation, or recovery contract.
+That is a relying-party question as much as an engineering one.
 
 ## Installing it
 
@@ -175,9 +187,11 @@ their work.
   on systems without `bootc` it is explicitly `unavailable`.
 - The Bazzite-derived QCOW2 passes the isolated mechanics canary, but its
   negative UKI and lockdown observations hold it from policy admission.
-- Whether Bluefin LTS/CentOS bootc actually boots the intended signed UKI with
-  the attestos command line embedded and measured. Package presence alone is
-  insufficient.
+- Whether the separately signed PCR 12 policy add-on remains reproducible under
+  updates, rollback, alternate ordering, and a production key lifecycle. The
+  frozen single-policy harness now passes; these lifecycle cases do not.
+- How to build the agent and policy into a sealed candidate, verify a signed
+  quote outside the guest, and replay the relevant event logs.
 - Is PCR 15 populated the way the design assumes on a bootc root.
 - Does MOK enrollment produce a PCR 7 value stable enough to write a policy
   against.

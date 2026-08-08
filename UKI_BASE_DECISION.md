@@ -1,52 +1,77 @@
 # UKI Base Decision
 
-Date: 2026-08-06
+Date: 2026-08-07
 
-Decision status: selected for the next UKI engineering canary; not selected as
-a production or gaming distribution base.
+Decision status: Fedora sealed Atomic is the current UKI harness substrate.
+No production or gaming distribution base has been selected.
 
-## Selection
+## Decision
 
-Use `ghcr.io/ublue-os/bluefin-lts:stable` as the first UKI-capable desktop
-candidate.
+Do not advance standard Bluefin LTS as the positive UKI candidate. Retain it
+as a measured negative control. Use the digest-pinned Fedora sealed Silverblue
+artifact only to test loaded-UKI, Secure Boot, PCR 11, and signed PCR 12 add-on
+contracts.
 
-The choice is based on current source, not branding:
+This is an evidence-harness decision, not a distribution decision. Bazzite
+remains the gaming product hypothesis and remains held from policy admission.
 
-- Bluefin LTS derives from `quay.io/centos-bootc/centos-bootc`.
-- Its kernel swap explicitly installs `kernel-uki-virt` alongside the kernel.
-- The CentOS Stream kernel describes that package as a prebuilt default UKI
-  for virtual machines.
-- Upstream bootc has landed the UKI cleanup and sealed UKI/composefs build
-  machinery that was previously only a tracker proposal.
-- It remains a desktop-oriented bootc image, making it a closer engineering
-  comparison than a minimal server image.
+## Evidence
 
-Primary source references:
+The Bluefin experiment verified its immutable OCI provenance and found a
+signed UKI-shaped artifact during static inspection. The booted guest then
+proved that firmware selected shim/GRUB and loaded separate kernel and initramfs
+artifacts instead of that UKI. Package presence and static signature success
+therefore did not satisfy loaded-artifact identity.
 
-- [Bluefin LTS Containerfile](https://github.com/ublue-os/bluefin-lts/blob/main/Containerfile)
-- [Bluefin LTS kernel swap](https://github.com/ublue-os/bluefin-lts/blob/main/build_scripts/scripts/kernel-swap.sh)
-- [bootc UKI cleanup, merged](https://github.com/bootc-dev/bootc/pull/2200)
-- [bootc sealed-image design](https://github.com/bootc-dev/bootc/blob/main/docs/src/experimental-composefs.md)
-- [CentOS Stream kernel UKI package](https://gitlab.com/redhat/centos-stream/rpms/kernel/-/blob/c10s/kernel.spec)
+The Fedora sealed Atomic positive control subsequently proved the missing
+joins on one frozen input:
 
-## Why Bazzite is held
+1. immutable source and version-matched installer provenance;
+2. exactly one statically inspected upstream-signed UKI;
+3. firmware-selected path and loaded-file SHA-256 equality;
+4. Secure Boot rejection after an unsigned `.cmdline` mutation; and
+5. a nonzero PCR 11 from the loaded UKI.
 
-Bazzite remains the product hypothesis because gaming support is the point of
-the project. It is held as the UKI implementation base because its build
-explicitly excludes `kernel-uki-virt`. Retrofitting a different boot path would
-create a security-critical fork from the behavior being evaluated.
+The control is documented in
+[`FEDORA_SEALED_POSITIVE_CONTROL.md`](FEDORA_SEALED_POSITIVE_CONTROL.md). It
+keeps manufacturer, policy, and production trust false.
 
-## Admission test
+## Policy Mechanism Control
 
-Package presence is not sufficient. The Bluefin LTS candidate advances only
-if a separately built and booted artifact proves:
+The replicated bounded experiment leaves the upstream Fedora UKI byte-identical
+and installs one separately signed systemd command-line add-on. systemd-stub
+authenticates the add-on, appends its policy, and measures the load options into
+PCR 12. Baseline, two signed boots, and a post-signature tamper negative are
+specified in [`FEDORA_PCR12_ADDON_CANARY.md`](FEDORA_PCR12_ADDON_CANARY.md).
+It passed twice in run `31234464516` while all trust flags remained false.
 
-1. the firmware booted the intended UKI;
-2. the UKI signature chains to the canary's pinned test key;
-3. `.cmdline` contains the exact approved arguments;
-4. PCR and event-log evidence reflects that UKI;
-5. a command-line or UKI substitution is rejected; and
-6. update and rollback preserve the same invariants.
+This mechanism avoids rebuilding the upstream UKI merely to add attestos policy.
+It does not resolve how an end-user system enrolls, rotates, revokes, or recovers
+the add-on signing key.
 
-Until those checks pass, `policy_trusted=false` and the attestos base remains
-unchanged.
+## Why Bazzite Is Held
+
+Bazzite's build excludes the UKI kernel packages and the booted mechanics
+canary exposed no systemd-stub identity. Its intended policy arguments were
+absent, and PCRs 11 and 15 remained zero. The source layer therefore produces
+valid raw TPM mechanics but no admitted operating-system policy.
+
+Retrofitting another boot path would create a security-critical divergence
+from the gaming image being evaluated. That work should start only after the
+Fedora harness has frozen the evidence contract and a relying party has stated
+which key hierarchy and residual risks it would accept.
+
+## Remaining Admission Gates
+
+A policy-capable candidate still needs all of the following:
+
+1. the attestos agent integrated before the sealed image is produced;
+2. an externally verified quote over the frozen PCR selection;
+3. event-log replay joined to the quoted snapshot;
+4. signed update, rollback, revocation, and minimum-version policy;
+5. hardware EK/manufacturer validation;
+6. relay resistance and privacy; and
+7. explicit relying-party acceptance.
+
+Until those checks pass, `manufacturer_trusted=false`, `policy_trusted=false`,
+and `production_trusted=false` remain mandatory.
